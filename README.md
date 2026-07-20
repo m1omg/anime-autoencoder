@@ -18,10 +18,19 @@ network built.
   chaotic phase of training and permanently freezes the encoder (a fun failure mode found
   while building this). A linear 2-unit latent with a gentle L2 pull toward the origin — plus
   a short LR warmup — fixes it.
+- **✨ Sharpness (gradient) loss:** alongside pixel MSE, the decoder is trained to match the
+  *spatial gradients* (edges) of the target, not just its pixels. Plain MSE rewards averaging
+  between plausible options, which is exactly why autoencoders blur — the gradient term pushes
+  back toward crisp edges. It's a toggle, so you can flip it off and watch reconstructions turn
+  to mush.
 - **Latent noise injection** during training keeps the space smooth between clusters, so
   dragging morphs instead of jumping.
 - **Augmentations:** each source image becomes 16 variants (shift / zoom / rotate / mirror),
-  so real clusters form in the latent space instead of three lonely points.
+  so real clusters form in the latent space instead of lonely isolated points.
+- **Eight faces** populate the space, so interpolation traverses a genuinely varied set instead
+  of cross-fading a handful of attractors. Note the honest limit: two latent numbers can't hold
+  eight faces *sharply*, so individual reconstructions stay soft — that 2-D bottleneck, not the
+  loss, is the hard wall. Interpolation ≠ compositional part-swapping.
 - **Live views:** decoded mosaic of the whole plane (progressively refreshed), training
   samples as live-encoded colored dots, adaptive map range, log-scale loss curve, PSNR.
 - **🎬 Tour mode** animates the cursor between class centroids; you can also **add your own
@@ -37,5 +46,7 @@ python3 -m http.server
 Sister project of [neural-oliver](https://github.com/m1omg/neural-oliver), where a coordinate
 MLP (SIREN, Fourier features & friends) learns to paint a single image.
 
-Characters: Klee (Genshin Impact), Cirno & Flandre Scarlet (Touhou Project) — fan-art images,
-used here for a non-commercial educational demo.
+Characters: Klee & Sigewinne (Genshin Impact), Cirno & Flandre Scarlet & Reimu Hakurei
+(Touhou Project), Konata Izumi (Lucky Star), Megumin (KonoSuba), and Kanna Kamui (Miss
+Kobayashi's Dragon Maid) — safe-rated fan-art images, used here for a non-commercial
+educational demo.

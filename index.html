@@ -68,6 +68,7 @@
                 <button id="tour">🎬 Prehliadka</button>
             </div>
             <div class="row">
+                <button class="active" id="sharp">✨ Sharpness loss</button>
                 <button id="upload">🖼 Pridať vlastný obrázok</button>
                 <input type="file" id="file" accept="image/*" style="display:none">
             </div>
@@ -111,16 +112,19 @@ const STR = {
         &nbsp;<a href="https://m1omg.github.io/neural-oliver/">← Neural network learns Oliver</a>`,
         tData: '🖼 Data', tMap: '🗺 Latent space — drag me!', tDec: '🎨 Decoder paints', tChart: '📉 Loss curve (log)',
         pause: '⏸ Pause', train: '▶ Train', reset: '⟲ Reset', tour: '🎬 Tour', upload: '🖼 Add your own image',
+        sharp: '✨ Sharpness loss',
         lLr: 'Learning rate (Adam)', lBudget: 'Training — ms per frame',
         kStep: 'Step', kEpoch: 'Epoch', kLoss: 'Loss (MSE)', kPsnr: 'PSNR', kParams: 'Parameters', kSps: 'Steps/s',
         hint: `Network: <b>6912 → 128 → 32 → 2 → 32 → 128 → 6912</b> (ReLU, linear latent with a gentle pull
         toward the origin — a tanh bottleneck would saturate and freeze the encoder; sigmoid output), trained from
         scratch with backpropagation + Adam. Each image gets <b>16 augmented variants</b> (shift, zoom, rotate,
         mirror) so the map isn't just three lonely points. A little <b>noise</b> is injected into the latent during
-        training to keep the space between images smooth. Large dots with an outline are the originals.`,
+        training to keep the space between images smooth. <b>✨ Sharpness loss</b> also matches the image
+        <i>gradients</i> (edges), not just pixels — plain MSE rewards averaging, which blurs; toggle it off to
+        watch the reconstructions turn to mush. Large dots with an outline are the originals.`,
         errLoad: '⚠ Sprites failed to load (serve over HTTP, not file://).',
         errImg: '⚠ This file can’t be loaded as an image.',
-        errMax: '⚠ Maximum of 6 images.'
+        errMax: '⚠ Maximum of 12 images.'
     },
     sk: {
         locale: 'sk', toggle: '🇬🇧 EN',
@@ -133,16 +137,19 @@ const STR = {
         &nbsp;<a href="https://m1omg.github.io/neural-oliver/">← Neurónka sa učí Olivera</a>`,
         tData: '🖼 Dáta', tMap: '🗺 Latentný priestor — ťahaj!', tDec: '🎨 Dekóder kreslí', tChart: '📉 Priebeh straty (log)',
         pause: '⏸ Pauza', train: '▶ Trénuj', reset: '⟲ Reset', tour: '🎬 Prehliadka', upload: '🖼 Pridať vlastný obrázok',
+        sharp: '✨ Ostrostná strata',
         lLr: 'Rýchlosť učenia (Adam)', lBudget: 'Tréning — ms na snímok',
         kStep: 'Krok', kEpoch: 'Epocha', kLoss: 'Strata (MSE)', kPsnr: 'PSNR', kParams: 'Parametre', kSps: 'Krokov/s',
         hint: `Sieť: <b>6912 → 128 → 32 → 2 → 32 → 128 → 6912</b> (ReLU, lineárny latent s jemným
         ťahom k stredu — tanh by sa v úzkom hrdle saturoval, výstup = sigmoid),
         tréning od nuly cez backpropagation + Adam. Každý obrázok má <b>16 augmentovaných variantov</b>
         (posun, zväčšenie, otočenie, zrkadlenie), aby mapa nebola len 3 osamelé body. Do latentu sa počas
-        tréningu pridáva malý <b>šum</b>, nech je priestor medzi obrázkami hladký. Veľké bodky s obrysom sú originály.`,
+        tréningu pridáva malý <b>šum</b>, nech je priestor medzi obrázkami hladký. <b>✨ Ostrostná strata</b>
+        navyše zhoduje <i>gradienty</i> (okraje) obrázka, nielen pixely — samotné MSE odmeňuje priemerovanie, čo
+        rozmazáva; vypni ju a sleduj, ako sa rekonštrukcie rozmažú. Veľké bodky s obrysom sú originály.`,
         errLoad: '⚠ Sprity sa nenačítali (spusti cez server, nie file://).',
         errImg: '⚠ Tento súbor sa nedá načítať ako obrázok.',
-        errMax: '⚠ Maximálne 6 obrázkov.'
+        errMax: '⚠ Maximálne 12 obrázkov.'
     }
 };
 let LANG = new URLSearchParams(location.search).get('lang') || localStorage.getItem('lang') || 'en';
@@ -163,6 +170,7 @@ function applyLang() {
     document.querySelector('.hint').innerHTML = t.hint;
     document.getElementById('reset').textContent = t.reset;
     document.getElementById('tour').textContent = t.tour;
+    document.getElementById('sharp').textContent = t.sharp;
     document.getElementById('upload').textContent = t.upload;
     document.getElementById('lang').textContent = t.toggle;
     syncPlay();
@@ -180,7 +188,11 @@ const SIZES = [D, 128, 32, 2, 32, 128, D];
 // latent je LINEÁRNY + jemný ťah k stredu (LAMBDA): tanh v úzkom hrdle sa saturuje a učenie zamrzne
 const ACTN  = ['relu', 'relu', 'lin', 'relu', 'relu', 'sig'];
 const LAMBDA = 0.01, WARM = 200;
-const BS = Math.max(1, +(new URLSearchParams(location.search).get('bs')) || 8);
+const _qs = new URLSearchParams(location.search);
+const BS = Math.max(1, +(_qs.get('bs')) || 8);
+const SHARP = _qs.has('sharp') ? +_qs.get('sharp') : 0.7;   // váha gradientovej (ostrostnej) straty
+let sharpOn = true;
+const gpx = new Float32Array(D);                            // dL/dvýstup pred sigmoidom (MSE + ostrosť)
 let ZR = 1.15;                                               // polomer mapy v latente — adaptívny
 const noiseSigma = () => 0.02 * ZR;                          // šum v latente škáluje s rozsahom
 const TAU = Math.PI * 2;
@@ -219,6 +231,33 @@ function dact(l, k) {
     if (ACTN[l] === 'relu') return Z[l][k] > 0 ? 1 : 0;
     return 1;   // lin
 }
+// Gradientová (ostrostná) strata: zhoduje priestorové gradienty (okraje) rekonštrukcie a cieľa.
+// Samotné MSE odmeňuje priemerovanie susedných možností → rozmazanie; toto tlačí na ostré prechody.
+const IMG3 = IMG * 3;
+function addSharpGrad(out, tgt) {
+    for (let y = 0; y < IMG; y++) {                          // horizontálne okraje
+        const row = y * IMG3;
+        for (let x = 0; x < IMG - 1; x++) {
+            const cur = row + x * 3;
+            for (let c = 0; c < 3; c++) {
+                const i = cur + c, n = i + 3;
+                const d = SHARP * ((out[n] - out[i]) - (tgt[n] - tgt[i]));
+                gpx[n] += d; gpx[i] -= d;
+            }
+        }
+    }
+    for (let y = 0; y < IMG - 1; y++) {                      // vertikálne okraje
+        const row = y * IMG3;
+        for (let x = 0; x < IMG; x++) {
+            const cur = row + x * 3;
+            for (let c = 0; c < 3; c++) {
+                const i = cur + c, n = i + IMG3;
+                const d = SHARP * ((out[n] - out[i]) - (tgt[n] - tgt[i]));
+                gpx[n] += d; gpx[i] -= d;
+            }
+        }
+    }
+}
 function trainStep(lr) {
     for (let l = 0; l < L; l++) { gW[l].fill(0); gB[l].fill(0); }
     let se = 0;
@@ -230,7 +269,9 @@ function trainStep(lr) {
             if (l === LATL) { latClean.set(A[LATL + 1]); const sg = noiseSigma(); for (let k = 0; k < 2; k++) A[LATL + 1][k] += randn() * sg; }
         }
         const out = A[L], dOut = DEL[L - 1];
-        for (let i = 0; i < D; i++) { const e = out[i] - x[i]; se += e * e; dOut[i] = e * out[i] * (1 - out[i]); }
+        for (let i = 0; i < D; i++) { const e = out[i] - x[i]; se += e * e; gpx[i] = e; }
+        if (sharpOn && SHARP > 0) addSharpGrad(out, x);
+        for (let i = 0; i < D; i++) dOut[i] = gpx[i] * out[i] * (1 - out[i]);
         for (let l = L - 1; l >= 0; l--) {
             const rows = SIZES[l + 1], cols = SIZES[l], w = W[l], prev = A[l], del = DEL[l], gWl = gW[l], gBl = gB[l];
             for (let i = 0; i < rows; i++) {
@@ -270,11 +311,16 @@ function trainStep(lr) {
 
 // ==================== DÁTA: sprity + augmentácie ====================
 const SPRITES = [
-    { src: 'sprites/klee.png',    color: '#ff6a6a' },
-    { src: 'sprites/cirno.png',   color: '#6ab8ff' },
-    { src: 'sprites/flandre.png', color: '#ffd75a' },
+    { src: 'sprites/klee.png',      color: '#ff6a6a' },
+    { src: 'sprites/cirno.png',     color: '#6ab8ff' },
+    { src: 'sprites/flandre.png',   color: '#ffd75a' },
+    { src: 'sprites/konata.png',    color: '#7effc0' },
+    { src: 'sprites/megumin.png',   color: '#ff5c8a' },
+    { src: 'sprites/sigewinne.png', color: '#c0a0ff' },
+    { src: 'sprites/reimu.png',     color: '#ff9d4d' },
+    { src: 'sprites/kanna.png',     color: '#9dff5a' },
 ];
-const EXTRA_COLORS = ['#7effc0', '#ff9de0', '#c0a0ff'];
+const EXTRA_COLORS = ['#ff9de0', '#5ad9ff', '#ffe08a'];
 const AUG_PER = 15;
 let classes = [], data = [];      // data: {x: Float32Array(D), cls, orig}
 const acan = document.createElement('canvas'); acan.width = IMG; acan.height = IMG;
@@ -461,6 +507,8 @@ function tickTour() {
     zCur = [a[0] + (b[0] - a[0]) * e + Math.cos(w) * 0.05, a[1] + (b[1] - a[1]) * e + Math.sin(w) * 0.05];
 }
 tourBtn.addEventListener('click', () => { tourOn = !tourOn; tourT0 = performance.now(); tourBtn.classList.toggle('active', tourOn); });
+const sharpBtn = document.getElementById('sharp');
+sharpBtn.addEventListener('click', () => { sharpOn = !sharpOn; sharpBtn.classList.toggle('active', sharpOn); });
 
 // ==================== INTERAKCIA ====================
 let dragging = false;
@@ -493,7 +541,7 @@ slider('budget', 'budgetVal', v => '' + v, v => (budget = v, v));
 
 const fileInput = document.getElementById('file');
 document.getElementById('upload').addEventListener('click', () => {
-    if (classes.length >= 6) { document.getElementById('err').textContent = T().errMax; return; }
+    if (classes.length >= 12) { document.getElementById('err').textContent = T().errMax; return; }
     fileInput.click();
 });
 fileInput.addEventListener('change', () => {
