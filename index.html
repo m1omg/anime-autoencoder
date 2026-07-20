@@ -42,6 +42,7 @@
 </style>
 </head>
 <body>
+    <button id="lang" style="float:right; margin-left:12px">🇸🇰 SK</button>
     <h1>🧭🧠 Prieskumník latentného priestoru</h1>
     <div class="sub"><b>Autoenkodér</b> sa priamo v prehliadači učí stlačiť každý obrázok (48×48×3 = 6 912 čísel)
         do <b>dvoch čísel</b> — latentného kódu — a potom ho z nich zase rozbaliť. <b>Ťahaj kurzor po mape</b> a sleduj,
@@ -97,6 +98,82 @@
 
 <script>
 'use strict';
+// ==================== JAZYK / LANGUAGE (EN predvolený, SK prepínač) ====================
+const STR = {
+    en: {
+        locale: 'en', toggle: '🇸🇰 SK',
+        title: '🧭🧠 Latent Space Explorer',
+        h1: '🧭🧠 Latent Space Explorer',
+        sub: `An <b>autoencoder</b> learns right in your browser to squeeze each image (48×48×3 = 6,912 numbers)
+        down to <b>two numbers</b> — a latent code — and then unpack it back. <b>Drag the cursor around the map</b>
+        and watch what the decoder paints between the images it has learned. The mosaic behind the map shows what
+        "lives" in every corner of the space; the colored dots are the training samples. Give it a minute to train 🙂
+        &nbsp;<a href="https://m1omg.github.io/neural-oliver/">← Neural network learns Oliver</a>`,
+        tData: '🖼 Data', tMap: '🗺 Latent space — drag me!', tDec: '🎨 Decoder paints', tChart: '📉 Loss curve (log)',
+        pause: '⏸ Pause', train: '▶ Train', reset: '⟲ Reset', tour: '🎬 Tour', upload: '🖼 Add your own image',
+        lLr: 'Learning rate (Adam)', lBudget: 'Training — ms per frame',
+        kStep: 'Step', kEpoch: 'Epoch', kLoss: 'Loss (MSE)', kPsnr: 'PSNR', kParams: 'Parameters', kSps: 'Steps/s',
+        hint: `Network: <b>6912 → 128 → 32 → 2 → 32 → 128 → 6912</b> (ReLU, linear latent with a gentle pull
+        toward the origin — a tanh bottleneck would saturate and freeze the encoder; sigmoid output), trained from
+        scratch with backpropagation + Adam. Each image gets <b>16 augmented variants</b> (shift, zoom, rotate,
+        mirror) so the map isn't just three lonely points. A little <b>noise</b> is injected into the latent during
+        training to keep the space between images smooth. Large dots with an outline are the originals.`,
+        errLoad: '⚠ Sprites failed to load (serve over HTTP, not file://).',
+        errImg: '⚠ This file can’t be loaded as an image.',
+        errMax: '⚠ Maximum of 6 images.'
+    },
+    sk: {
+        locale: 'sk', toggle: '🇬🇧 EN',
+        title: '🧭🧠 Prieskumník latentného priestoru',
+        h1: '🧭🧠 Prieskumník latentného priestoru',
+        sub: `<b>Autoenkodér</b> sa priamo v prehliadači učí stlačiť každý obrázok (48×48×3 = 6 912 čísel)
+        do <b>dvoch čísel</b> — latentného kódu — a potom ho z nich zase rozbaliť. <b>Ťahaj kurzor po mape</b> a sleduj,
+        čo dekóder vykreslí medzi naučenými obrázkami. Mozaika v pozadí mapy ukazuje, čo „žije" v každom kúte
+        priestoru, farebné bodky sú tréningové vzorky. Chvíľu počkaj, kým sa sieť natrénuje 🙂
+        &nbsp;<a href="https://m1omg.github.io/neural-oliver/">← Neurónka sa učí Olivera</a>`,
+        tData: '🖼 Dáta', tMap: '🗺 Latentný priestor — ťahaj!', tDec: '🎨 Dekóder kreslí', tChart: '📉 Priebeh straty (log)',
+        pause: '⏸ Pauza', train: '▶ Trénuj', reset: '⟲ Reset', tour: '🎬 Prehliadka', upload: '🖼 Pridať vlastný obrázok',
+        lLr: 'Rýchlosť učenia (Adam)', lBudget: 'Tréning — ms na snímok',
+        kStep: 'Krok', kEpoch: 'Epocha', kLoss: 'Strata (MSE)', kPsnr: 'PSNR', kParams: 'Parametre', kSps: 'Krokov/s',
+        hint: `Sieť: <b>6912 → 128 → 32 → 2 → 32 → 128 → 6912</b> (ReLU, lineárny latent s jemným
+        ťahom k stredu — tanh by sa v úzkom hrdle saturoval, výstup = sigmoid),
+        tréning od nuly cez backpropagation + Adam. Každý obrázok má <b>16 augmentovaných variantov</b>
+        (posun, zväčšenie, otočenie, zrkadlenie), aby mapa nebola len 3 osamelé body. Do latentu sa počas
+        tréningu pridáva malý <b>šum</b>, nech je priestor medzi obrázkami hladký. Veľké bodky s obrysom sú originály.`,
+        errLoad: '⚠ Sprity sa nenačítali (spusti cez server, nie file://).',
+        errImg: '⚠ Tento súbor sa nedá načítať ako obrázok.',
+        errMax: '⚠ Maximálne 6 obrázkov.'
+    }
+};
+let LANG = new URLSearchParams(location.search).get('lang') || localStorage.getItem('lang') || 'en';
+if (!STR[LANG]) LANG = 'en';
+const T = () => STR[LANG];
+function applyLang() {
+    const t = T();
+    document.documentElement.lang = t.locale;
+    document.title = t.title;
+    document.querySelector('h1').textContent = t.h1;
+    document.querySelector('.sub').innerHTML = t.sub;
+    const ts = document.querySelectorAll('.cwrap .t');
+    [t.tData, t.tMap, t.tDec, t.tChart].forEach((s, i) => ts[i].textContent = s);
+    const ls = document.querySelectorAll('.label');
+    ls[0].textContent = t.lLr; ls[1].textContent = t.lBudget;
+    const ks = document.querySelectorAll('.stat .k');
+    [t.kStep, t.kEpoch, t.kLoss, t.kPsnr, t.kParams, t.kSps].forEach((s, i) => ks[i].textContent = s);
+    document.querySelector('.hint').innerHTML = t.hint;
+    document.getElementById('reset').textContent = t.reset;
+    document.getElementById('tour').textContent = t.tour;
+    document.getElementById('upload').textContent = t.upload;
+    document.getElementById('lang').textContent = t.toggle;
+    syncPlay();
+    updateStats();
+}
+document.getElementById('lang').addEventListener('click', () => {
+    LANG = LANG === 'en' ? 'sk' : 'en';
+    try { localStorage.setItem('lang', LANG); } catch (e) {}
+    applyLang();
+});
+
 // ==================== AUTOENKODÉR od nuly (ploché Float32Array) ====================
 const IMG = 48, D = IMG * IMG * 3, LATL = 2;                 // LATL = index vrstvy, ktorej výstup je latent
 const SIZES = [D, 128, 32, 2, 32, 128, D];
@@ -336,8 +413,8 @@ let running = true, lr = 0.002, budget = 22, steps = 0, lastLoss = 0;
 let stepAcc = 0, spsT = performance.now(), sps = 0;
 function countParams() { let p = 0; for (let l = 0; l < L; l++) p += W[l].length + B[l].length; return p; }
 function updateStats() {
-    document.getElementById('epoch').textContent = steps.toLocaleString('sk');
-    document.getElementById('epochs').textContent = data.length ? Math.floor(steps * BS / data.length).toLocaleString('sk') : '0';
+    document.getElementById('epoch').textContent = steps.toLocaleString(T().locale);
+    document.getElementById('epochs').textContent = data.length ? Math.floor(steps * BS / data.length).toLocaleString(T().locale) : '0';
     const sl = smoothL === null ? lastLoss : smoothL;
     document.getElementById('loss').textContent = steps ? sl.toFixed(4) : '—';
     document.getElementById('psnr').textContent = steps ? (10 * Math.log10(1 / Math.max(1e-6, sl))).toFixed(1) + ' dB' : '—';
@@ -398,12 +475,12 @@ mapCv.addEventListener('pointermove', e => { if (dragging) setFromEvent(e); });
 mapCv.addEventListener('pointerup', () => dragging = false);
 
 const playBtn = document.getElementById('play');
-function syncPlay() { playBtn.textContent = running ? '⏸ Pauza' : '▶ Trénuj'; playBtn.classList.toggle('active', running); }
+function syncPlay() { playBtn.textContent = running ? T().pause : T().train; playBtn.classList.toggle('active', running); }
 playBtn.addEventListener('click', () => { running = !running; syncPlay(); });
 syncPlay();
 document.getElementById('reset').addEventListener('click', () => {
     initNet(); steps = 0; lastLoss = 0; lossHist = []; smoothL = null; histStride = 1; strideCnt = 0; ZR = 1.15;
-    document.getElementById('params').textContent = countParams().toLocaleString('sk');
+    document.getElementById('params').textContent = countParams().toLocaleString(T().locale);
     updateStats();
 });
 function slider(id, valId, fmt, cb) {
@@ -416,7 +493,7 @@ slider('budget', 'budgetVal', v => '' + v, v => (budget = v, v));
 
 const fileInput = document.getElementById('file');
 document.getElementById('upload').addEventListener('click', () => {
-    if (classes.length >= 6) { document.getElementById('err').textContent = '⚠ Maximálne 6 obrázkov.'; return; }
+    if (classes.length >= 6) { document.getElementById('err').textContent = T().errMax; return; }
     fileInput.click();
 });
 fileInput.addEventListener('change', () => {
@@ -432,13 +509,14 @@ fileInput.addEventListener('change', () => {
         sq.onload = () => addClass(sq, EXTRA_COLORS[(classes.length - SPRITES.length) % EXTRA_COLORS.length]);
         sq.src = cc.toDataURL();
     };
-    img.onerror = () => { URL.revokeObjectURL(url); document.getElementById('err').textContent = '⚠ Tento súbor sa nedá načítať ako obrázok.'; };
+    img.onerror = () => { URL.revokeObjectURL(url); document.getElementById('err').textContent = T().errImg; };
     img.src = url;
 });
 
 // ==================== ŠTART ====================
+applyLang();
 initNet();
-document.getElementById('params').textContent = countParams().toLocaleString('sk');
+document.getElementById('params').textContent = countParams().toLocaleString(T().locale);
 Promise.all(SPRITES.map(sp => new Promise((res, rej) => {
     const img = new Image();
     img.onload = () => res({ img, color: sp.color });
@@ -447,7 +525,7 @@ Promise.all(SPRITES.map(sp => new Promise((res, rej) => {
 }))).then(loaded => {
     for (const { img, color } of loaded) addClass(img, color);
     loop();
-}).catch(() => { document.getElementById('err').textContent = '⚠ Sprity sa nenačítali (spusti cez server, nie file://).'; });
+}).catch(() => { document.getElementById('err').textContent = T().errLoad; });
 </script>
 </body>
 </html>
