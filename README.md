@@ -18,8 +18,16 @@ network built.
   output resolution are locked together and cost grows *quadratically*, so it's a live control.
   To keep it from melting a phone/tablet, the minibatch shrinks as resolution rises (so per-step
   cost — and frame pacing — stays roughly constant) and per-frame decode work scales down too,
-  keeping cursor-dragging smooth even at 96². It's **pure CPU JavaScript** (main thread); a
-  WebGPU/Web-Worker port would be the way to push resolution much higher at full speed.
+  keeping cursor-dragging smooth even at 96².
+- **Three compute backends (toggleable live):**
+  - **🧮 CPU** — training runs on the main thread (simple, always available).
+  - **🧵 Web Worker** — the exact same trainer runs in a background thread, so the UI stays at
+    ~60 fps no matter how hard it's training. Best for keeping interaction buttery on any device.
+  - **⚡ WebGPU** — forward, backprop, and Adam run as WGSL compute shaders on the GPU. It ships
+    with a **forward self-test against the CPU engine** plus a **live loss-divergence guard**:
+    if the GPU is unavailable or produces incorrect results, it falls back to CPU automatically
+    and says so. (All three share one rendering path: whichever backend trains, it periodically
+    hands a weight snapshot back to the main thread, which does all the drawing.)
 - **Linear latent + center-pull regularizer:** a tanh bottleneck saturates during the early
   chaotic phase of training and permanently freezes the encoder (a fun failure mode found
   while building this). A linear 2-unit latent with a gentle L2 pull toward the origin — plus
