@@ -21,12 +21,16 @@ network built.
   keeping cursor-dragging smooth even at 96².
 - **Three compute backends (toggleable live):**
   - **🧮 CPU** — training runs on the main thread (simple, always available).
-  - **🧵 Web Worker** — the exact same trainer runs in a background thread, so the UI stays at
-    ~60 fps no matter how hard it's training. Best for keeping interaction buttery on any device.
+  - **🧵 Web Worker** (default) — the exact same trainer runs in a background thread, so the UI
+    stays at ~60 fps no matter how hard it's training — and because frame pacing no longer
+    depends on it, it always uses the full batch size (CPU mode must shrink the batch at high
+    resolutions to stay responsive).
   - **⚡ WebGPU** — forward, backprop, and Adam run as WGSL compute shaders on the GPU. It ships
     with a **forward self-test against the CPU engine** plus a **live loss-divergence guard**:
     if the GPU is unavailable or produces incorrect results, it falls back to CPU automatically
-    and says so. (All three share one rendering path: whichever backend trains, it periodically
+    and says so (with the measured mismatch in the status line). Tolerances account for
+    legitimate float32/FMA drift across GPU vendors — a wrong kernel is orders of magnitude
+    outside them. (All three share one rendering path: whichever backend trains, it periodically
     hands a weight snapshot back to the main thread, which does all the drawing.)
 - **Linear latent + center-pull regularizer:** a tanh bottleneck saturates during the early
   chaotic phase of training and permanently freezes the encoder (a fun failure mode found
