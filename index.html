@@ -76,6 +76,13 @@
             <div class="label">Rýchlosť učenia (Adam)</div>
             <div class="row"><input type="range" id="lr" min="-4" max="-2" step="0.05" value="-2.7"><span class="val" id="lrVal">0.002</span></div>
 
+            <div class="label" id="resLabel">Resolution (higher = sharper, slower)</div>
+            <div class="row" id="resBtns">
+                <button data-res="48">48²</button>
+                <button data-res="64" class="active">64²</button>
+                <button data-res="96">96²</button>
+            </div>
+
             <div class="label">Tréning — ms na snímok</div>
             <div class="row"><input type="range" id="budget" min="5" max="50" step="1" value="22"><span class="val" id="budgetVal">22</span></div>
 
@@ -105,17 +112,17 @@ const STR = {
         locale: 'en', toggle: '🇸🇰 SK',
         title: '🧭🧠 Latent Space Explorer',
         h1: '🧭🧠 Latent Space Explorer',
-        sub: `An <b>autoencoder</b> learns right in your browser to squeeze each image (48×48×3 = 6,912 numbers)
+        sub: `An <b>autoencoder</b> learns right in your browser to squeeze each image (thousands of pixel numbers)
         down to <b>two numbers</b> — a latent code — and then unpack it back. <b>Drag the cursor around the map</b>
         and watch what the decoder paints between the images it has learned. The mosaic behind the map shows what
         "lives" in every corner of the space; the colored dots are the training samples. Give it a minute to train 🙂
         &nbsp;<a href="https://m1omg.github.io/neural-oliver/">← Neural network learns Oliver</a>`,
         tData: '🖼 Data', tMap: '🗺 Latent space — drag me!', tDec: '🎨 Decoder paints', tChart: '📉 Loss curve (log)',
         pause: '⏸ Pause', train: '▶ Train', reset: '⟲ Reset', tour: '🎬 Tour', upload: '🖼 Add your own image',
-        sharp: '✨ Sharpness loss',
+        sharp: '✨ Sharpness loss', res: 'Resolution (higher = sharper, slower)',
         lLr: 'Learning rate (Adam)', lBudget: 'Training — ms per frame',
         kStep: 'Step', kEpoch: 'Epoch', kLoss: 'Loss (MSE)', kPsnr: 'PSNR', kParams: 'Parameters', kSps: 'Steps/s',
-        hint: `Network: <b>6912 → 128 → 32 → 2 → 32 → 128 → 6912</b> (ReLU, linear latent with a gentle pull
+        hint: `Network: <b>N → 128 → 32 → 2 → 32 → 128 → N</b> (N = width·height·3; ReLU, linear latent with a gentle pull
         toward the origin — a tanh bottleneck would saturate and freeze the encoder; sigmoid output), trained from
         scratch with backpropagation + Adam. Each image gets <b>16 augmented variants</b> (shift, zoom, rotate,
         mirror) so the map isn't just three lonely points. A little <b>noise</b> is injected into the latent during
@@ -130,17 +137,17 @@ const STR = {
         locale: 'sk', toggle: '🇬🇧 EN',
         title: '🧭🧠 Prieskumník latentného priestoru',
         h1: '🧭🧠 Prieskumník latentného priestoru',
-        sub: `<b>Autoenkodér</b> sa priamo v prehliadači učí stlačiť každý obrázok (48×48×3 = 6 912 čísel)
+        sub: `<b>Autoenkodér</b> sa priamo v prehliadači učí stlačiť každý obrázok (tisíce pixelových čísel)
         do <b>dvoch čísel</b> — latentného kódu — a potom ho z nich zase rozbaliť. <b>Ťahaj kurzor po mape</b> a sleduj,
         čo dekóder vykreslí medzi naučenými obrázkami. Mozaika v pozadí mapy ukazuje, čo „žije" v každom kúte
         priestoru, farebné bodky sú tréningové vzorky. Chvíľu počkaj, kým sa sieť natrénuje 🙂
         &nbsp;<a href="https://m1omg.github.io/neural-oliver/">← Neurónka sa učí Olivera</a>`,
         tData: '🖼 Dáta', tMap: '🗺 Latentný priestor — ťahaj!', tDec: '🎨 Dekóder kreslí', tChart: '📉 Priebeh straty (log)',
         pause: '⏸ Pauza', train: '▶ Trénuj', reset: '⟲ Reset', tour: '🎬 Prehliadka', upload: '🖼 Pridať vlastný obrázok',
-        sharp: '✨ Ostrostná strata',
+        sharp: '✨ Ostrostná strata', res: 'Rozlíšenie (vyššie = ostrejšie, pomalšie)',
         lLr: 'Rýchlosť učenia (Adam)', lBudget: 'Tréning — ms na snímok',
         kStep: 'Krok', kEpoch: 'Epocha', kLoss: 'Strata (MSE)', kPsnr: 'PSNR', kParams: 'Parametre', kSps: 'Krokov/s',
-        hint: `Sieť: <b>6912 → 128 → 32 → 2 → 32 → 128 → 6912</b> (ReLU, lineárny latent s jemným
+        hint: `Sieť: <b>N → 128 → 32 → 2 → 32 → 128 → N</b> (N = šírka·výška·3; ReLU, lineárny latent s jemným
         ťahom k stredu — tanh by sa v úzkom hrdle saturoval, výstup = sigmoid),
         tréning od nuly cez backpropagation + Adam. Každý obrázok má <b>16 augmentovaných variantov</b>
         (posun, zväčšenie, otočenie, zrkadlenie), aby mapa nebola len 3 osamelé body. Do latentu sa počas
@@ -171,6 +178,7 @@ function applyLang() {
     document.getElementById('reset').textContent = t.reset;
     document.getElementById('tour').textContent = t.tour;
     document.getElementById('sharp').textContent = t.sharp;
+    document.getElementById('resLabel').textContent = t.res;
     document.getElementById('upload').textContent = t.upload;
     document.getElementById('lang').textContent = t.toggle;
     syncPlay();
@@ -183,16 +191,23 @@ document.getElementById('lang').addEventListener('click', () => {
 });
 
 // ==================== AUTOENKODÉR od nuly (ploché Float32Array) ====================
-const IMG = 48, D = IMG * IMG * 3, LATL = 2;                 // LATL = index vrstvy, ktorej výstup je latent
-const SIZES = [D, 128, 32, 2, 32, 128, D];
+// Rozlíšenie je nastaviteľné za behu (IMG×IMG). Keďže ide o „pixel-vektorový" autoenkodér,
+// vstup aj výstup majú rozmer IMG²·3 — vyššie rozlíšenie = kvadraticky viac parametrov aj počtov.
+const LATL = 2;                                              // LATL = index vrstvy, ktorej výstup je latent
+const _qs = new URLSearchParams(location.search);
+const RES_OPTS = [48, 64, 96];
+let IMG = Math.max(16, (+_qs.get('res')) || 64);            // predvolené 64 (48 = rýchle, 96 = ostré ale pomalé)
+let D = IMG * IMG * 3, IMG3 = IMG * 3;
+let SIZES = [D, 128, 32, 2, 32, 128, D];
 // latent je LINEÁRNY + jemný ťah k stredu (LAMBDA): tanh v úzkom hrdle sa saturuje a učenie zamrzne
 const ACTN  = ['relu', 'relu', 'lin', 'relu', 'relu', 'sig'];
 const LAMBDA = 0.01, WARM = 200;
-const _qs = new URLSearchParams(location.search);
-const BS = Math.max(1, +(_qs.get('bs')) || 8);
+// dávka sa zmenšuje s rozlíšením, aby BS·D (a teda cena jedného kroku ≈ plynulosť) ostala ~konštantná
+function pickBS() { return _qs.has('bs') ? Math.max(1, +_qs.get('bs')) : (IMG <= 48 ? 8 : IMG <= 64 ? 5 : 2); }
+let BS = pickBS();
 const SHARP = _qs.has('sharp') ? +_qs.get('sharp') : 0.7;   // váha gradientovej (ostrostnej) straty
 let sharpOn = true;
-const gpx = new Float32Array(D);                            // dL/dvýstup pred sigmoidom (MSE + ostrosť)
+let gpx = new Float32Array(D);                             // dL/dvýstup pred sigmoidom (MSE + ostrosť)
 let ZR = 1.15;                                               // polomer mapy v latente — adaptívny
 const noiseSigma = () => 0.02 * ZR;                          // šum v latente škáluje s rozsahom
 const TAU = Math.PI * 2;
@@ -233,7 +248,6 @@ function dact(l, k) {
 }
 // Gradientová (ostrostná) strata: zhoduje priestorové gradienty (okraje) rekonštrukcie a cieľa.
 // Samotné MSE odmeňuje priemerovanie susedných možností → rozmazanie; toto tlačí na ostré prechody.
-const IMG3 = IMG * 3;
 function addSharpGrad(out, tgt) {
     for (let y = 0; y < IMG; y++) {                          // horizontálne okraje
         const row = y * IMG3;
@@ -360,7 +374,7 @@ const outCv = document.getElementById('out'), octx = outCv.getContext('2d');
 const chartCv = document.getElementById('chart'), cctx = chartCv.getContext('2d');
 const MS = 360;                                               // rozsah mapy v latente: [-ZR, ZR], ZR je adaptívne
 const z2px = z => (z + ZR) / (2 * ZR) * MS, px2z = p => p / MS * 2 * ZR - ZR;
-const outImg = new ImageData(IMG, IMG);
+let outImg = new ImageData(IMG, IMG);
 const otmp = document.createElement('canvas'); otmp.width = IMG; otmp.height = IMG;
 const otmpCtx = otmp.getContext('2d');
 const mosaic = document.createElement('canvas'); mosaic.width = MS; mosaic.height = MS;
@@ -476,9 +490,12 @@ function loop() {
         const now = performance.now();
         if (now - spsT > 500) { sps = stepAcc / ((now - spsT) / 1000); stepAcc = 0; spsT = now; }
         tickTour();
-        updateDots(running ? 2 : 6);
+        // dekódy mozaiky/bodiek za snímok — pri vyššom rozlíšení menej, aby ťahanie ostalo plynulé
+        // (drawOutput, spätná väzba ťahania, beží vždy raz)
+        const rw = D > 16000 ? (running ? 1 : 2) : D > 8000 ? (running ? 2 : 3) : (running ? 2 : 6);
+        updateDots(rw);
         adaptZR();
-        updateMosaic(running ? 2 : 6);
+        updateMosaic(rw);
         drawOutput();
         drawMap();
         drawChart();
@@ -526,11 +543,33 @@ const playBtn = document.getElementById('play');
 function syncPlay() { playBtn.textContent = running ? T().pause : T().train; playBtn.classList.toggle('active', running); }
 playBtn.addEventListener('click', () => { running = !running; syncPlay(); });
 syncPlay();
-document.getElementById('reset').addEventListener('click', () => {
+function resetTraining() {
     initNet(); steps = 0; lastLoss = 0; lossHist = []; smoothL = null; histStride = 1; strideCnt = 0; ZR = 1.15;
+    mosCell = 0; if (mosCtx) mosCtx.clearRect(0, 0, MS, MS);
     document.getElementById('params').textContent = countParams().toLocaleString(T().locale);
     updateStats();
-});
+}
+document.getElementById('reset').addEventListener('click', resetTraining);
+
+// znovu navzorkuje všetky triedy pri novom rozlíšení (bez pridávania náhľadov)
+function resampleData() {
+    data = [];
+    for (let ci = 0; ci < classes.length; ci++) {
+        data.push({ x: sampleFrom(classes[ci].img, false), cls: ci, orig: true });
+        for (let i = 0; i < AUG_PER; i++) data.push({ x: sampleFrom(classes[ci].img, true), cls: ci, orig: false });
+    }
+    dotPos = data.map(() => null); dotIdx = 0;
+}
+function setResolution(px) {
+    if (px === IMG) return;
+    IMG = px; D = IMG * IMG * 3; IMG3 = IMG * 3; BS = pickBS();
+    SIZES = [D, 128, 32, 2, 32, 128, D];
+    gpx = new Float32Array(D);
+    acan.width = IMG; acan.height = IMG;                     // vzorkovacie plátno musí sledovať rozlíšenie
+    outImg = new ImageData(IMG, IMG); otmp.width = IMG; otmp.height = IMG;
+    resampleData();
+    resetTraining();
+}
 function slider(id, valId, fmt, cb) {
     const el = document.getElementById(id), out = document.getElementById(valId);
     const upd = () => { const v = cb(parseFloat(el.value)); out.textContent = fmt(v); };
@@ -538,6 +577,14 @@ function slider(id, valId, fmt, cb) {
 }
 slider('lr', 'lrVal', v => v < 0.001 ? v.toFixed(4) : v.toFixed(3), v => (lr = Math.pow(10, v), lr));
 slider('budget', 'budgetVal', v => '' + v, v => (budget = v, v));
+
+document.querySelectorAll('#resBtns button').forEach(b => {
+    b.classList.toggle('active', +b.dataset.res === IMG);
+    b.addEventListener('click', () => {
+        document.querySelectorAll('#resBtns button').forEach(o => o.classList.remove('active'));
+        b.classList.add('active'); setResolution(+b.dataset.res);
+    });
+});
 
 const fileInput = document.getElementById('file');
 document.getElementById('upload').addEventListener('click', () => {

@@ -11,9 +11,15 @@ the background is the decoded latent plane itself, so you can literally see the 
 network built.
 
 ## How it works
-- **Architecture:** `6912 → 128 → 32 → 2 → 32 → 128 → 6912` (48×48 RGB in and out),
-  ReLU hidden layers, sigmoid output, trained with backpropagation + Adam — all hand-written
-  on flat `Float32Array`s, zero dependencies.
+- **Architecture:** `N → 128 → 32 → 2 → 32 → 128 → N` where `N = width·height·3`
+  (default 64×64 RGB = 12,288, selectable 48 / 64 / 96), ReLU hidden layers, sigmoid output,
+  trained with backpropagation + Adam — all hand-written on flat `Float32Array`s, zero dependencies.
+- **Resolution selector (48 / 64 / 96):** since this is a pixel-vector autoencoder, input and
+  output resolution are locked together and cost grows *quadratically*, so it's a live control.
+  To keep it from melting a phone/tablet, the minibatch shrinks as resolution rises (so per-step
+  cost — and frame pacing — stays roughly constant) and per-frame decode work scales down too,
+  keeping cursor-dragging smooth even at 96². It's **pure CPU JavaScript** (main thread); a
+  WebGPU/Web-Worker port would be the way to push resolution much higher at full speed.
 - **Linear latent + center-pull regularizer:** a tanh bottleneck saturates during the early
   chaotic phase of training and permanently freezes the encoder (a fun failure mode found
   while building this). A linear 2-unit latent with a gentle L2 pull toward the origin — plus
