@@ -143,7 +143,9 @@ const STR = {
         mirror) so the map isn't just three lonely points. A little <b>noise</b> is injected into the latent during
         training to keep the space between images smooth. <b>✨ Sharpness loss</b> also matches the image
         <i>gradients</i> (edges), not just pixels — plain MSE rewards averaging, which blurs; toggle it off to
-        watch the reconstructions turn to mush. Large dots with an outline are the originals.`,
+        watch the reconstructions turn to mush. The noise and the center pull both <b>anneal</b> as training
+        progresses, so each class's variants stop collapsing into one blurry average.
+        Large dots with an outline are the originals.`,
         errLoad: '⚠ Sprites failed to load (serve over HTTP, not file://).',
         errImg: '⚠ This file can’t be loaded as an image.',
         errMax: '⚠ Maximum of 12 images.'
@@ -175,7 +177,9 @@ const STR = {
         (posun, zväčšenie, otočenie, zrkadlenie), aby mapa nebola len 3 osamelé body. Do latentu sa počas
         tréningu pridáva malý <b>šum</b>, nech je priestor medzi obrázkami hladký. <b>✨ Ostrostná strata</b>
         navyše zhoduje <i>gradienty</i> (okraje) obrázka, nielen pixely — samotné MSE odmeňuje priemerovanie, čo
-        rozmazáva; vypni ju a sleduj, ako sa rekonštrukcie rozmažú. Veľké bodky s obrysom sú originály.`,
+        rozmazáva; vypni ju a sleduj, ako sa rekonštrukcie rozmažú. Šum aj ťah k stredu sa počas tréningu
+        <b>tlmia</b>, aby varianty jednej triedy nesplývali do jedného rozmazaného priemeru.
+        Veľké bodky s obrysom sú originály.`,
         errLoad: '⚠ Sprity sa nenačítali (spusti cez server, nie file://).',
         errImg: '⚠ Tento súbor sa nedá načítať ako obrázok.',
         errMax: '⚠ Maximálne 12 obrázkov.'
@@ -237,7 +241,8 @@ let gpx = new Float32Array(D);                             // dL/dvýstup pred s
 let ZR = 1.15;                                               // polomer mapy v latente — adaptívny
 // šum aj ťah k stredu sa počas tréningu tlmia k 25 % — inak varianty jednej triedy
 // zostanú nalepené na jednom bode a dekóder kreslí len ich rozmazaný priemer
-const anneal = () => 0.25 + 0.75 * Math.exp(-tAdam * BS / 150000);
+// (globálne `steps` rastie vo všetkých backendoch; tAdam len v CPU režime)
+const anneal = () => 0.25 + 0.75 * Math.exp(-steps * bsFor(mode) / 150000);
 const noiseSigma = () => 0.02 * ZR * anneal();               // šum v latente škáluje s rozsahom
 const TAU = Math.PI * 2;
 function randn() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v); }
@@ -424,7 +429,7 @@ self.onmessage=function(e){const m=e.data;
  if(m.type==='init'){SIZES=m.sizes;IMG=m.IMG;D=m.D;IMG3=m.IMG3;L=SIZES.length-1;ACTN=m.ACTN;LAMBDA=m.LAMBDA;WARM=m.WARM;initNet();steps=0;}
  else if(m.type==='weights'){loadW(new Float32Array(m.w));}
  else if(m.type==='data'){flat=new Float32Array(m.buf);N=m.n;dim=m.dim;}
- else if(m.type==='config'){lr=m.lr;BS=m.BS;SHARP=m.SHARP;sharpOn=m.sharpOn;noise=m.noise;budget=m.budget;}
+ else if(m.type==='config'){lr=m.lr;BS=m.BS;SHARP=m.SHARP;sharpOn=m.sharpOn;noise=m.noise;budget=m.budget;if(m.lambda!==undefined)LAMBDA=m.lambda;}
  else if(m.type==='reset'){if(m.sizes){SIZES=m.sizes;IMG=m.IMG;D=m.D;IMG3=m.IMG3;L=SIZES.length-1;}initNet();steps=0;}
  else if(m.type==='run'){running=m.on;lastPostT=performance.now();ensureLoop();}};`;
 let workerURL = null;
@@ -442,7 +447,7 @@ function sendDataToBackend() {
     if (mode === 'webgpu' && gpu) gpu.setData(data);
 }
 function sendCfgToBackend() {
-    const cfg = { lr, BS: bsFor(mode), SHARP, sharpOn, noise: noiseSigma(), budget };
+    const cfg = { lr, BS: bsFor(mode), SHARP, sharpOn, noise: noiseSigma(), lambda: LAMBDA * anneal(), budget };
     if (mode === 'worker' && worker) worker.postMessage({ type: 'config', ...cfg });
     if (mode === 'webgpu' && gpu) gpu.setConfig(cfg);
 }
@@ -567,7 +572,7 @@ struct St{elr:f32,c1:f32,c2:f32,invB:f32,sharp:f32,lambda:f32,b1:f32,b2:f32};
 };
 
 async function makeGPU(device) {
-    const G = { device, running: false, tAdam: 0, cfg: { lr: 0.002, BS: 5, SHARP: 0.7, sharpOn: true, noise: 0.03 }, dataN: 0, mapping: false, lastRead: 0 };
+    const G = { device, running: false, tAdam: 0, cfg: { lr: 0.002, BS: 5, SHARP: 0.7, sharpOn: true, noise: 0.03, lambda: LAMBDA }, dataN: 0, mapping: false, lastRead: 0 };
     const buf = (sz, usage) => device.createBuffer({ size: Math.max(4, sz * 4), usage });
     const ST = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
     const UNI = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
@@ -645,7 +650,7 @@ async function makeGPU(device) {
         G.tAdam++;
         const b1 = 0.9, b2 = 0.999, warm = G.tAdam < WARM ? G.tAdam / WARM : 1;
         const c1 = 1 - Math.pow(b1, G.tAdam), c2 = 1 - Math.pow(b2, G.tAdam);
-        device.queue.writeBuffer(stUBO, 0, new Float32Array([G.cfg.lr * warm, c1, c2, 1 / BS, G.cfg.SHARP, LAMBDA, b1, b2]).buffer);
+        device.queue.writeBuffer(stUBO, 0, new Float32Array([G.cfg.lr * warm, c1, c2, 1 / BS, G.cfg.SHARP, G.cfg.lambda, b1, b2]).buffer);
         const idx = new Uint32Array(BS), noi = new Float32Array(2 * BS);
         for (let b = 0; b < BS; b++) idx[b] = (Math.random() * G.dataN) | 0;
         for (let k = 0; k < 2 * BS; k++) noi[k] = gRandn() * G.cfg.noise;
@@ -731,7 +736,7 @@ async function startWebGPU(prev) {
         const device = await adapter.requestDevice();
         device.addEventListener && device.addEventListener('uncapturederror', () => {});
         gpu = await makeGPU(device);
-        gpu.setConfig({ lr, BS: bsFor('webgpu'), SHARP, sharpOn, noise: noiseSigma() });
+        gpu.setConfig({ lr, BS: bsFor('webgpu'), SHARP, sharpOn, noise: noiseSigma(), lambda: LAMBDA * anneal() });
         gpu.reset(SIZES, IMG, packWeights(), data, false);
         // ---- forward self-test proti CPU ----
         // Tolerancie musia rátať s realitou float32 na skutočných GPU: FMA a iné poradie sčítania

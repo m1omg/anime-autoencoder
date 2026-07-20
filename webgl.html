@@ -118,7 +118,7 @@ const STR = {
         Large dots with an outline are the originals.`,
         errLoad: '⚠ Sprites failed to load (serve over HTTP, not file://).',
         errImg: '⚠ This file can’t be loaded as an image.',
-        errMax: '⚠ Maximum of 6 images.',
+        errMax: '⚠ Maximum of 12 images.',
         errGL: '⚠ WebGL2 with float-texture rendering isn’t available here — <a href="index.html">open the CPU version</a> instead.'
     },
     sk: {
@@ -144,7 +144,7 @@ const STR = {
         Veľké bodky s obrysom sú originály.`,
         errLoad: '⚠ Sprity sa nenačítali (spusti cez server, nie file://).',
         errImg: '⚠ Tento súbor sa nedá načítať ako obrázok.',
-        errMax: '⚠ Maximálne 6 obrázkov.',
+        errMax: '⚠ Maximálne 12 obrázkov.',
         errGL: '⚠ WebGL2 s renderovaním do float textúr tu nie je dostupné — <a href="index.html">otvor CPU verziu</a>.'
     }
 };
@@ -184,7 +184,7 @@ const ACTN  = ['relu', 'relu', 'lin', 'relu', 'relu', 'sig'];
 const ACODE = { relu: 0, lin: 1, sig: 2 };
 const LAMBDA = 0.01, WARM = 200;
 const BS = Math.min(256, Math.max(1, +(new URLSearchParams(location.search).get('bs')) || 32));
-const NMAX = 96;                                             // 6 classes × 16 samples
+const NMAX = 192;                                            // 12 classes × 16 samples
 let ZR = 1.15;
 // latent noise and the center pull both anneal to 25% as training progresses — otherwise
 // each class's augmented variants stay glued to one latent point and the decoder can only
@@ -525,11 +525,16 @@ function countParams() { let p = 0; for (let l = 0; l < L; l++) p += SIZES[l] * 
 
 // ==================== DATA: sprites + augmentations ====================
 const SPRITES = [
-    { src: 'sprites/klee.png',    color: '#ff6a6a' },
-    { src: 'sprites/cirno.png',   color: '#6ab8ff' },
-    { src: 'sprites/flandre.png', color: '#ffd75a' },
+    { src: 'sprites/klee.png',      color: '#ff6a6a' },
+    { src: 'sprites/cirno.png',     color: '#6ab8ff' },
+    { src: 'sprites/flandre.png',   color: '#ffd75a' },
+    { src: 'sprites/konata.png',    color: '#7effc0' },
+    { src: 'sprites/megumin.png',   color: '#ff5c8a' },
+    { src: 'sprites/sigewinne.png', color: '#c0a0ff' },
+    { src: 'sprites/reimu.png',     color: '#ff9d4d' },
+    { src: 'sprites/kanna.png',     color: '#9dff5a' },
 ];
-const EXTRA_COLORS = ['#7effc0', '#ff9de0', '#c0a0ff'];
+const EXTRA_COLORS = ['#ff9de0', '#5ad9ff', '#ffe08a'];
 const AUG_PER = 15;
 let classes = [], data = [];      // data: {cls, orig} — pixels live in dataTex on the GPU
 const acan = document.createElement('canvas'); acan.width = IMG; acan.height = IMG;
@@ -735,7 +740,7 @@ slider('budget', 'budgetVal', v => '' + v, v => (budget = v, v));
 
 const fileInput = document.getElementById('file');
 document.getElementById('upload').addEventListener('click', () => {
-    if (classes.length >= 6) { document.getElementById('err').textContent = T().errMax; return; }
+    if (classes.length >= 12) { document.getElementById('err').textContent = T().errMax; return; }
     fileInput.click();
 });
 fileInput.addEventListener('change', () => {

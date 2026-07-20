@@ -10,20 +10,21 @@ Drag the cursor around the 2D latent map and the decoder renders, in real time, 
 the background is the decoded latent plane itself, so you can literally see the map the
 network built.
 
-## ⚡ WebGL version
-[`webgl.html`](https://m1omg.github.io/anime-autoencoder/webgl.html) trains the same autoencoder
-**entirely on the GPU**: every matrix multiply, the full backpropagation and the Adam optimizer run
-as WebGL2 fragment-shader passes over `R32F` float textures (still zero dependencies). The extra
-horsepower is spent on quality:
-- **Bigger network** — `6912 → 256 → 64 → 2 → 64 → 256 → 6912` (~3.6M parameters vs ~1.8M on the CPU
-  version) with **batch 32** instead of 8, for smoother gradients and sharper reconstructions.
+## ⚡ WebGL2 edition
+[`webgl.html`](https://m1omg.github.io/anime-autoencoder/webgl.html) is a second GPU path,
+complementary to the main page's WebGPU backend: it trains the whole autoencoder as **WebGL2
+fragment-shader passes** over `R32F` float textures (every matmul, backprop and Adam — still zero
+dependencies), so it runs even where WebGPU isn't available (~98% vs ~75% of browsers). Being
+GPU-only, it spends the headroom on quality:
+- **Bigger network** — `6912 → 256 → 64 → 2 → 64 → 256 → 6912` (~3.6M parameters vs ~1.8M) with
+  **batch 32**, for smoother gradients and sharper reconstructions (fixed 48² resolution).
 - **16×16 mosaic** (vs 9×9) decoded on the GPU in batched passes, fully refreshed every 4 frames
   instead of trickling in 2 cells per frame, with bilinear filtering in the shader.
 - **Bicubic (Catmull-Rom) upscaling** of the decoder preview and **HiDPI/retina-aware** canvases.
 - **Adaptive scheduling** — one tiny loss readback per frame doubles as a GPU sync point, and the
   steps-per-frame count self-tunes to your training time budget slider.
 
-If WebGL2 float rendering isn't available the page points you back to the CPU version.
+If WebGL2 float rendering isn't available the page points you back to the main page.
 
 ## How it works
 - **Architecture:** `N → 128 → 32 → 2 → 32 → 128 → N` where `N = width·height·3`
