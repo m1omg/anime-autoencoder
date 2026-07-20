@@ -184,7 +184,10 @@ const ACTN  = ['relu', 'relu', 'lin', 'relu', 'relu', 'sig'];
 const LAMBDA = 0.01, WARM = 200;
 const BS = Math.max(1, +(new URLSearchParams(location.search).get('bs')) || 8);
 let ZR = 1.15;                                               // polomer mapy v latente — adaptívny
-const noiseSigma = () => 0.02 * ZR;                          // šum v latente škáluje s rozsahom
+// šum aj ťah k stredu sa počas tréningu tlmia k 25 % — inak varianty jednej triedy
+// zostanú nalepené na jednom bode a dekóder kreslí len ich rozmazaný priemer
+const anneal = () => 0.25 + 0.75 * Math.exp(-tAdam * BS / 150000);
+const noiseSigma = () => 0.02 * ZR * anneal();               // šum v latente škáluje s rozsahom
 const TAU = Math.PI * 2;
 function randn() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v); }
 
@@ -224,6 +227,7 @@ function dact(l, k) {
 function trainStep(lr) {
     for (let l = 0; l < L; l++) { gW[l].fill(0); gB[l].fill(0); }
     let se = 0;
+    const lam = LAMBDA * anneal();
     for (let b = 0; b < BS; b++) {
         const x = data[(Math.random() * data.length) | 0].x;
         A[0].set(x);
@@ -247,7 +251,7 @@ function trainStep(lr) {
                     for (let k = 0; k < cols; k++) nd[k] += w[off + k] * di;
                 }
                 for (let k = 0; k < cols; k++) nd[k] *= dact(l - 1, k);
-                if (l - 1 === LATL) for (let k = 0; k < cols; k++) nd[k] += LAMBDA * Z[LATL][k];   // ťah latentu k stredu
+                if (l - 1 === LATL) for (let k = 0; k < cols; k++) nd[k] += lam * Z[LATL][k];   // ťah latentu k stredu
             }
         }
     }

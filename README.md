@@ -34,7 +34,9 @@ If WebGL2 float rendering isn't available the page points you back to the CPU ve
   while building this). A linear 2-unit latent with a gentle L2 pull toward the origin — plus
   a short LR warmup — fixes it.
 - **Latent noise injection** during training keeps the space smooth between clusters, so
-  dragging morphs instead of jumping.
+  dragging morphs instead of jumping. Both the noise and the center pull **anneal to 25%**
+  as training progresses — kept at full strength forever, they glue each class's augmented
+  variants onto a single latent point and the decoder can only paint their blurred average.
 - **Augmentations:** each source image becomes 16 variants (shift / zoom / rotate / mirror),
   so real clusters form in the latent space instead of three lonely points.
 - **Live views:** decoded mosaic of the whole plane (progressively refreshed), training

@@ -186,7 +186,11 @@ const LAMBDA = 0.01, WARM = 200;
 const BS = Math.min(256, Math.max(1, +(new URLSearchParams(location.search).get('bs')) || 32));
 const NMAX = 96;                                             // 6 classes × 16 samples
 let ZR = 1.15;
-const noiseSigma = () => 0.02 * ZR;
+// latent noise and the center pull both anneal to 25% as training progresses — otherwise
+// each class's augmented variants stay glued to one latent point and the decoder can only
+// paint their blurred average
+const anneal = () => 0.25 + 0.75 * Math.exp(-tAdam * BS / 150000);
+const noiseSigma = () => 0.02 * ZR * anneal();
 const TAU = Math.PI * 2;
 function randn() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v); }
 const L = SIZES.length - 1;
@@ -413,7 +417,7 @@ function fwd(l, inT, outT, y0, cnt) {
 }
 function trainStep(lr0) {
     for (let b = 0; b < BS; b++) idxArr[b] = (Math.random() * data.length) | 0;
-    const sg = noiseSigma();
+    const lam = LAMBDA * anneal(), sg = noiseSigma();
     for (let k = 0; k < 2 * BS; k++) noiseArr[k] = randn() * sg;
     upload(TR.idx, 0, 0, BS, 1, idxArr);
     upload(TR.noise, 0, 0, 2, BS, noiseArr);
@@ -440,7 +444,7 @@ function trainStep(lr0) {
             bindTx(pr, 'uW', Y.W[Y.pi]); bindTx(pr, 'uDel', TR.DEL[l]);
             bindTx(pr, 'uA', TR.A[l]); bindTx(pr, 'uLat', TR.latClean);
             setI(pr, 'uRows', Y.rows); setI(pr, 'uAct', ACODE[ACTN[l - 1]]);
-            setF(pr, 'uLambda', l - 1 === LATL ? LAMBDA : 0);
+            setF(pr, 'uLambda', l - 1 === LATL ? lam : 0);
         });
     }
     tAdam++;
