@@ -10,6 +10,22 @@ Drag the cursor around the 2D latent map and the decoder renders, in real time, 
 the background is the decoded latent plane itself, so you can literally see the map the
 network built.
 
+## ⚡ WebGL2 edition
+[`webgl.html`](https://m1omg.github.io/anime-autoencoder/webgl.html) is a second GPU path,
+complementary to the main page's WebGPU backend: it trains the whole autoencoder as **WebGL2
+fragment-shader passes** over `R32F` float textures (every matmul, backprop and Adam — still zero
+dependencies), so it runs even where WebGPU isn't available (~98% vs ~75% of browsers). Being
+GPU-only, it spends the headroom on quality:
+- **Bigger network** — `6912 → 256 → 64 → 2 → 64 → 256 → 6912` (~3.6M parameters vs ~1.8M) with
+  **batch 32**, for smoother gradients and sharper reconstructions (fixed 48² resolution).
+- **16×16 mosaic** (vs 9×9) decoded on the GPU in batched passes, fully refreshed every 4 frames
+  instead of trickling in 2 cells per frame, with bilinear filtering in the shader.
+- **Bicubic (Catmull-Rom) upscaling** of the decoder preview and **HiDPI/retina-aware** canvases.
+- **Adaptive scheduling** — one tiny loss readback per frame doubles as a GPU sync point, and the
+  steps-per-frame count self-tunes to your training time budget slider.
+
+If WebGL2 float rendering isn't available the page points you back to the main page.
+
 ## How it works
 - **Architecture:** `N → 128 → 32 → 2 → 32 → 128 → N` where `N = width·height·3`
   (default 64×64 RGB = 12,288, selectable 48 / 64 / 96), ReLU hidden layers, sigmoid output,
@@ -42,7 +58,9 @@ network built.
   back toward crisp edges. It's a toggle, so you can flip it off and watch reconstructions turn
   to mush.
 - **Latent noise injection** during training keeps the space smooth between clusters, so
-  dragging morphs instead of jumping.
+  dragging morphs instead of jumping. Both the noise and the center pull **anneal to 25%**
+  as training progresses — kept at full strength forever, they glue each class's augmented
+  variants onto a single latent point and the decoder can only paint their blurred average.
 - **Augmentations:** each source image becomes 16 variants (shift / zoom / rotate / mirror),
   so real clusters form in the latent space instead of lonely isolated points.
 - **Eight faces** populate the space, so interpolation traverses a genuinely varied set instead
