@@ -108,7 +108,8 @@ const STR = {
         down to <b>two numbers</b> — a latent code — and then unpack it back. <b>Drag the cursor around the map</b>
         and watch what the decoder paints between the images it has learned. The mosaic behind the map shows what
         "lives" in every corner of the space; the colored dots are the training samples. Give it a minute to train 🙂
-        &nbsp;<a href="https://m1omg.github.io/neural-oliver/">← Neural network learns Oliver</a>`,
+        &nbsp;<a href="webgl.html">⚡ WebGL GPU version</a>
+        &nbsp;·&nbsp;<a href="https://m1omg.github.io/neural-oliver/">← Neural network learns Oliver</a>`,
         tData: '🖼 Data', tMap: '🗺 Latent space — drag me!', tDec: '🎨 Decoder paints', tChart: '📉 Loss curve (log)',
         pause: '⏸ Pause', train: '▶ Train', reset: '⟲ Reset', tour: '🎬 Tour', upload: '🖼 Add your own image',
         lLr: 'Learning rate (Adam)', lBudget: 'Training — ms per frame',
@@ -130,7 +131,8 @@ const STR = {
         do <b>dvoch čísel</b> — latentného kódu — a potom ho z nich zase rozbaliť. <b>Ťahaj kurzor po mape</b> a sleduj,
         čo dekóder vykreslí medzi naučenými obrázkami. Mozaika v pozadí mapy ukazuje, čo „žije" v každom kúte
         priestoru, farebné bodky sú tréningové vzorky. Chvíľu počkaj, kým sa sieť natrénuje 🙂
-        &nbsp;<a href="https://m1omg.github.io/neural-oliver/">← Neurónka sa učí Olivera</a>`,
+        &nbsp;<a href="webgl.html">⚡ WebGL GPU verzia</a>
+        &nbsp;·&nbsp;<a href="https://m1omg.github.io/neural-oliver/">← Neurónka sa učí Olivera</a>`,
         tData: '🖼 Dáta', tMap: '🗺 Latentný priestor — ťahaj!', tDec: '🎨 Dekóder kreslí', tChart: '📉 Priebeh straty (log)',
         pause: '⏸ Pauza', train: '▶ Trénuj', reset: '⟲ Reset', tour: '🎬 Prehliadka', upload: '🖼 Pridať vlastný obrázok',
         lLr: 'Rýchlosť učenia (Adam)', lBudget: 'Tréning — ms na snímok',
@@ -331,6 +333,7 @@ function decodeToImageData(z) {
 function drawOutput() {
     decodeToImageData(zCur);
     octx.imageSmoothingEnabled = true;
+    octx.imageSmoothingQuality = 'high';
     octx.drawImage(otmp, 0, 0, outCv.width, outCv.height);
 }
 function updateMosaic(n) {
@@ -339,6 +342,7 @@ function updateMosaic(n) {
         const z = [px2z((gx + 0.5) * CELL), px2z((gy + 0.5) * CELL)];
         decodeToImageData(z);
         mosCtx.imageSmoothingEnabled = true;
+        mosCtx.imageSmoothingQuality = 'high';
         mosCtx.drawImage(otmp, gx * CELL, gy * CELL, CELL, CELL);
         mosCell = (mosCell + 1) % (GRID * GRID);
     }

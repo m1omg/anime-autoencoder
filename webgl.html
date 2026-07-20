@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🧭🧠 Latent Space Explorer — ⚡ WebGL</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧭</text></svg>">
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif; background: #0a0618;
+        color: #efe7ff; min-height: 100vh; padding: 18px; }
+    h1 { font-size: clamp(19px, 4vw, 28px); text-shadow: 0 0 16px rgba(150,90,255,0.7); margin-bottom: 4px; }
+    .sub { opacity: 0.65; font-size: 13px; margin-bottom: 16px; max-width: 760px; line-height: 1.5; }
+    .sub a, #backlink { color: #b060ff; }
+    .wrap { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
+    .card { background: rgba(28,14,52,0.7); border: 1px solid rgba(150,90,255,0.28);
+        border-radius: 16px; padding: 16px; box-shadow: 0 0 30px rgba(110,60,200,0.25); }
+    .canvases { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; }
+    .cwrap { text-align: center; }
+    .cwrap .t { font-size: 12px; opacity: 0.7; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+    canvas { display: block; border-radius: 12px; background: #07040f; max-width: 92vw; height: auto; }
+    #map { cursor: crosshair; touch-action: none; }
+    #chart { width: 100%; margin-top: 12px; }
+    .thumbs { display: flex; flex-direction: column; gap: 8px; }
+    .thumbs canvas { width: 56px; height: 56px; border-radius: 9px; border: 2px solid transparent; }
+    .panel { width: 320px; max-width: 88vw; }
+    .row { display: flex; align-items: center; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+    .label { font-size: 12px; opacity: 0.7; width: 100%; margin: 8px 0 2px; letter-spacing: 0.4px; text-transform: uppercase; }
+    button { cursor: pointer; border: 1px solid rgba(150,90,255,0.4); background: rgba(50,26,90,0.6);
+        color: #efe7ff; border-radius: 9px; padding: 7px 12px; font-size: 13px; transition: 0.12s; }
+    button:hover { background: rgba(90,50,150,0.8); }
+    button.active { background: linear-gradient(135deg, #7a40c0, #b060ff); border-color: transparent; box-shadow: 0 0 12px rgba(176,96,255,0.6); }
+    button.go { font-weight: bold; padding: 9px 16px; font-size: 14px; }
+    input[type=range] { flex: 1; accent-color: #b060ff; min-width: 110px; }
+    .val { font: bold 13px monospace; color: #d9c4ff; min-width: 54px; text-align: right; }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin-top: 10px; }
+    .stat { background: rgba(12,6,26,0.6); border: 1px solid rgba(150,90,255,0.2); border-radius: 9px; padding: 8px 10px; }
+    .stat .k { font-size: 11px; opacity: 0.6; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat .v { font: bold 16px monospace; color: #7effc0; }
+    .hint { font-size: 12px; opacity: 0.62; margin-top: 12px; line-height: 1.5; }
+    #err { color: #ff8080; font-size: 13px; margin-top: 10px; }
+    #err a { color: #b060ff; }
+</style>
+</head>
+<body>
+    <button id="lang" style="float:right; margin-left:12px">🇸🇰 SK</button>
+    <h1>🧭🧠 Latent Space Explorer — ⚡ WebGL</h1>
+    <div class="sub"><b>Autoencoder</b> trained entirely on your <b>GPU</b> — drag the cursor around the map
+        and watch what the decoder paints between the images it has learned.</div>
+
+    <div class="wrap">
+        <div class="card">
+            <div class="canvases">
+                <div class="cwrap"><div class="t">🖼 Data</div><div class="thumbs" id="thumbs"></div></div>
+                <div class="cwrap"><div class="t">🗺 Latent space — drag me!</div><canvas id="map" width="360" height="360"></canvas></div>
+                <div class="cwrap"><div class="t">🎨 Decoder paints</div><canvas id="out" width="360" height="360"></canvas></div>
+            </div>
+            <div class="cwrap" style="margin-top:12px"><div class="t">📉 Loss curve (log)</div><canvas id="chart" width="640" height="80"></canvas></div>
+            <div id="err"></div>
+        </div>
+
+        <div class="card panel">
+            <div class="row" style="margin-top:0">
+                <button class="go active" id="play">⏸ Pause</button>
+                <button class="go" id="reset">⟲ Reset</button>
+                <button id="tour">🎬 Tour</button>
+            </div>
+            <div class="row">
+                <button id="upload">🖼 Add your own image</button>
+                <input type="file" id="file" accept="image/*" style="display:none">
+            </div>
+
+            <div class="label">Learning rate (Adam)</div>
+            <div class="row"><input type="range" id="lr" min="-4" max="-2" step="0.05" value="-2.7"><span class="val" id="lrVal">0.002</span></div>
+
+            <div class="label">Training — ms per frame</div>
+            <div class="row"><input type="range" id="budget" min="5" max="50" step="1" value="22"><span class="val" id="budgetVal">22</span></div>
+
+            <div class="stats">
+                <div class="stat"><div class="k">Step</div><div class="v" id="epoch">0</div></div>
+                <div class="stat"><div class="k">Epoch</div><div class="v" id="epochs">0</div></div>
+                <div class="stat"><div class="k">Loss (MSE)</div><div class="v" id="loss">—</div></div>
+                <div class="stat"><div class="k">PSNR</div><div class="v" id="psnr">—</div></div>
+                <div class="stat"><div class="k">Parameters</div><div class="v" id="params">—</div></div>
+                <div class="stat"><div class="k">Steps/s</div><div class="v" id="sps">—</div></div>
+            </div>
+
+            <div class="hint">Network: <b>6912 → 256 → 64 → 2 → 64 → 256 → 6912</b>, trained entirely on
+                the GPU with WebGL2 fragment shaders.</div>
+        </div>
+    </div>
+
+<script>
+'use strict';
+// ==================== LANGUAGE (EN default, SK toggle) ====================
+const STR = {
+    en: {
+        locale: 'en', toggle: '🇸🇰 SK',
+        title: '🧭🧠 Latent Space Explorer — ⚡ WebGL',
+        h1: '🧭🧠 Latent Space Explorer — ⚡ WebGL',
+        sub: `An <b>autoencoder</b> learns right in your browser — this time entirely on your <b>GPU</b> — to squeeze
+        each image (48×48×3 = 6,912 numbers) down to <b>two numbers</b> and unpack them back. <b>Drag the cursor
+        around the map</b> and watch what the decoder paints between the images it has learned. The mosaic behind
+        the map shows what "lives" in every corner of the space; the colored dots are the training samples.
+        Give it a minute to train 🙂
+        &nbsp;<a href="index.html">🐢 CPU (vanilla JS) version</a>
+        &nbsp;·&nbsp;<a href="https://m1omg.github.io/neural-oliver/">← Neural network learns Oliver</a>`,
+        tData: '🖼 Data', tMap: '🗺 Latent space — drag me!', tDec: '🎨 Decoder paints', tChart: '📉 Loss curve (log)',
+        pause: '⏸ Pause', train: '▶ Train', reset: '⟲ Reset', tour: '🎬 Tour', upload: '🖼 Add your own image',
+        lLr: 'Learning rate (Adam)', lBudget: 'Training — ms per frame',
+        kStep: 'Step', kEpoch: 'Epoch', kLoss: 'Loss (MSE)', kPsnr: 'PSNR', kParams: 'Parameters', kSps: 'Steps/s',
+        hint: `Network: <b>6912 → 256 → 64 → 2 → 64 → 256 → 6912</b> (~3.6M parameters, batch 32), trained
+        <b>entirely on the GPU</b>: every matrix multiply, the whole backpropagation and the Adam optimizer run
+        as WebGL2 fragment-shader passes over float textures — no libraries. The mosaic is a <b>16×16 grid</b>
+        decoded on the GPU, the big preview is upscaled with <b>bicubic (Catmull-Rom)</b> filtering, and
+        everything renders at native HiDPI resolution. Same tricks as the CPU version: linear latent with a
+        gentle pull to the origin, latent noise for a smooth map, 16 augmented variants per image.
+        Large dots with an outline are the originals.`,
+        errLoad: '⚠ Sprites failed to load (serve over HTTP, not file://).',
+        errImg: '⚠ This file can’t be loaded as an image.',
+        errMax: '⚠ Maximum of 6 images.',
+        errGL: '⚠ WebGL2 with float-texture rendering isn’t available here — <a href="index.html">open the CPU version</a> instead.'
+    },
+    sk: {
+        locale: 'sk', toggle: '🇬🇧 EN',
+        title: '🧭🧠 Prieskumník latentného priestoru — ⚡ WebGL',
+        h1: '🧭🧠 Prieskumník latentného priestoru — ⚡ WebGL',
+        sub: `<b>Autoenkodér</b> sa učí priamo v prehliadači — tentokrát celý na tvojej <b>grafickej karte</b> —
+        stlačiť každý obrázok (48×48×3 = 6 912 čísel) do <b>dvoch čísel</b> a zase ich rozbaliť. <b>Ťahaj kurzor
+        po mape</b> a sleduj, čo dekóder vykreslí medzi naučenými obrázkami. Mozaika v pozadí mapy ukazuje, čo
+        „žije" v každom kúte priestoru, farebné bodky sú tréningové vzorky. Chvíľu počkaj, kým sa sieť natrénuje 🙂
+        &nbsp;<a href="index.html">🐢 CPU (vanilla JS) verzia</a>
+        &nbsp;·&nbsp;<a href="https://m1omg.github.io/neural-oliver/">← Neurónka sa učí Olivera</a>`,
+        tData: '🖼 Dáta', tMap: '🗺 Latentný priestor — ťahaj!', tDec: '🎨 Dekóder kreslí', tChart: '📉 Priebeh straty (log)',
+        pause: '⏸ Pauza', train: '▶ Trénuj', reset: '⟲ Reset', tour: '🎬 Prehliadka', upload: '🖼 Pridať vlastný obrázok',
+        lLr: 'Rýchlosť učenia (Adam)', lBudget: 'Tréning — ms na snímok',
+        kStep: 'Krok', kEpoch: 'Epocha', kLoss: 'Strata (MSE)', kPsnr: 'PSNR', kParams: 'Parametre', kSps: 'Krokov/s',
+        hint: `Sieť: <b>6912 → 256 → 64 → 2 → 64 → 256 → 6912</b> (~3,6M parametrov, batch 32), trénovaná
+        <b>celá na GPU</b>: každé násobenie matíc, celá backpropagation aj Adam optimalizátor bežia ako
+        WebGL2 fragment-shader passy nad float textúrami — bez knižníc. Mozaika je <b>mriežka 16×16</b>
+        dekódovaná na GPU, veľký náhľad je zväčšený <b>bikubickým (Catmull-Rom)</b> filtrom a všetko sa
+        kreslí v natívnom HiDPI rozlíšení. Rovnaké triky ako v CPU verzii: lineárny latent s jemným ťahom
+        k stredu, šum v latente pre hladkú mapu, 16 augmentovaných variantov na obrázok.
+        Veľké bodky s obrysom sú originály.`,
+        errLoad: '⚠ Sprity sa nenačítali (spusti cez server, nie file://).',
+        errImg: '⚠ Tento súbor sa nedá načítať ako obrázok.',
+        errMax: '⚠ Maximálne 6 obrázkov.',
+        errGL: '⚠ WebGL2 s renderovaním do float textúr tu nie je dostupné — <a href="index.html">otvor CPU verziu</a>.'
+    }
+};
+let LANG = new URLSearchParams(location.search).get('lang') || localStorage.getItem('lang') || 'en';
+if (!STR[LANG]) LANG = 'en';
+const T = () => STR[LANG];
+function applyLang() {
+    const t = T();
+    document.documentElement.lang = t.locale;
+    document.title = t.title;
+    document.querySelector('h1').textContent = t.h1;
+    document.querySelector('.sub').innerHTML = t.sub;
+    const ts = document.querySelectorAll('.cwrap .t');
+    [t.tData, t.tMap, t.tDec, t.tChart].forEach((s, i) => ts[i].textContent = s);
+    const ls = document.querySelectorAll('.label');
+    ls[0].textContent = t.lLr; ls[1].textContent = t.lBudget;
+    const ks = document.querySelectorAll('.stat .k');
+    [t.kStep, t.kEpoch, t.kLoss, t.kPsnr, t.kParams, t.kSps].forEach((s, i) => ks[i].textContent = s);
+    document.querySelector('.hint').innerHTML = t.hint;
+    document.getElementById('reset').textContent = t.reset;
+    document.getElementById('tour').textContent = t.tour;
+    document.getElementById('upload').textContent = t.upload;
+    document.getElementById('lang').textContent = t.toggle;
+    syncPlay();
+    updateStats();
+}
+document.getElementById('lang').addEventListener('click', () => {
+    LANG = LANG === 'en' ? 'sk' : 'en';
+    try { localStorage.setItem('lang', LANG); } catch (e) {}
+    applyLang();
+});
+
+// ==================== NETWORK SHAPE ====================
+const IMG = 48, D = IMG * IMG * 3, LATL = 2;                 // LATL = layer index whose output is the latent
+const SIZES = [D, 256, 64, 2, 64, 256, D];
+const ACTN  = ['relu', 'relu', 'lin', 'relu', 'relu', 'sig'];
+const ACODE = { relu: 0, lin: 1, sig: 2 };
+const LAMBDA = 0.01, WARM = 200;
+const BS = Math.min(256, Math.max(1, +(new URLSearchParams(location.search).get('bs')) || 32));
+const NMAX = 96;                                             // 6 classes × 16 samples
+let ZR = 1.15;
+const noiseSigma = () => 0.02 * ZR;
+const TAU = Math.PI * 2;
+function randn() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v); }
+const L = SIZES.length - 1;
+let tAdam = 0;
+
+// ==================== WEBGL2 GPGPU ENGINE ====================
+// Everything — forward passes, backprop, Adam — runs as fragment-shader render
+// passes over R32F textures. Layout: weights W[l] are (cols × rows) textures,
+// activations/deltas are (units × batch) textures; texelFetch = exact indexing.
+const DPR = Math.min(2, window.devicePixelRatio || 1);
+const MS = 360, GRID = 16, CELL = MS / GRID, MCH = 64, CHUNKS = (GRID * GRID) / MCH;
+const glCv = document.createElement('canvas');
+glCv.width = glCv.height = Math.round(MS * DPR);
+let gl = null;
+function glFail() { document.getElementById('err').innerHTML = T().errGL; }
+
+const VS = `#version 300 es
+void main(){vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));gl_Position=vec4(p*2.-1.,0.,1.);}`;
+const HDR = `#version 300 es
+precision highp float;
+precision highp int;
+`;
+const FS_GATHER = HDR + `uniform sampler2D uData,uIdx;out vec4 O;
+void main(){ivec2 q=ivec2(gl_FragCoord.xy);
+ int idx=int(texelFetch(uIdx,ivec2(q.y,0),0).r+0.5);
+ O=vec4(texelFetch(uData,ivec2(q.x,idx),0).r,0.,0.,1.);}`;
+const FS_FORWARD = HDR + `uniform sampler2D uW,uB,uA;uniform int uCols,uAct;out vec4 O;
+void main(){ivec2 q=ivec2(gl_FragCoord.xy);
+ float s=texelFetch(uB,ivec2(q.x,0),0).r;
+ for(int j=0;j<uCols;j++) s+=texelFetch(uW,ivec2(j,q.x),0).r*texelFetch(uA,ivec2(j,q.y),0).r;
+ if(uAct==0) s=max(s,0.); else if(uAct==2) s=1./(1.+exp(-s));
+ O=vec4(s,0.,0.,1.);}`;
+const FS_NOISE = HDR + `uniform sampler2D uA,uN;out vec4 O;
+void main(){ivec2 q=ivec2(gl_FragCoord.xy);
+ O=vec4(texelFetch(uA,q,0).r+texelFetch(uN,q,0).r,0.,0.,1.);}`;
+const FS_DOUT = HDR + `uniform sampler2D uOut,uX;out vec4 O;
+void main(){ivec2 q=ivec2(gl_FragCoord.xy);
+ float o=texelFetch(uOut,q,0).r,x=texelFetch(uX,q,0).r;
+ O=vec4((o-x)*o*(1.-o),0.,0.,1.);}`;
+const FS_DBACK = HDR + `uniform sampler2D uW,uDel,uA,uLat;uniform int uRows,uAct;uniform float uLambda;out vec4 O;
+void main(){ivec2 q=ivec2(gl_FragCoord.xy);
+ float s=0.;
+ for(int i=0;i<uRows;i++) s+=texelFetch(uW,ivec2(q.x,i),0).r*texelFetch(uDel,ivec2(i,q.y),0).r;
+ if(uAct==0) s*=texelFetch(uA,q,0).r>0.?1.:0.;
+ s+=uLambda*texelFetch(uLat,q,0).r;
+ O=vec4(s,0.,0.,1.);}`;
+const FS_GRADW = HDR + `uniform sampler2D uDel,uA;uniform int uBatch;uniform float uInvB;out vec4 O;
+void main(){ivec2 q=ivec2(gl_FragCoord.xy);
+ float s=0.;
+ for(int b=0;b<uBatch;b++) s+=texelFetch(uDel,ivec2(q.y,b),0).r*texelFetch(uA,ivec2(q.x,b),0).r;
+ O=vec4(s*uInvB,0.,0.,1.);}`;
+const FS_GRADB = HDR + `uniform sampler2D uDel;uniform int uBatch;uniform float uInvB;out vec4 O;
+void main(){int i=int(gl_FragCoord.x);
+ float s=0.;
+ for(int b=0;b<uBatch;b++) s+=texelFetch(uDel,ivec2(i,b),0).r;
+ O=vec4(s*uInvB,0.,0.,1.);}`;
+const FS_ADAM = HDR + `uniform sampler2D uW,uM,uV,uG;uniform float uLr,uC1,uC2;
+layout(location=0) out vec4 OW;layout(location=1) out vec4 OM;layout(location=2) out vec4 OV;
+void main(){ivec2 q=ivec2(gl_FragCoord.xy);
+ float g=texelFetch(uG,q,0).r;
+ float m=0.9*texelFetch(uM,q,0).r+0.1*g;
+ float v=0.999*texelFetch(uV,q,0).r+0.001*g*g;
+ OM=vec4(m,0.,0.,1.);OV=vec4(v,0.,0.,1.);
+ OW=vec4(texelFetch(uW,q,0).r-uLr*(m/uC1)/(sqrt(v/uC2)+1e-8),0.,0.,1.);}`;
+const FS_LOSS = HDR + `uniform sampler2D uOut,uX;uniform int uD;out vec4 O;
+void main(){int b=int(gl_FragCoord.x);
+ float s=0.;
+ for(int i=0;i<uD;i++){float e=texelFetch(uOut,ivec2(i,b),0).r-texelFetch(uX,ivec2(i,b),0).r;s+=e*e;}
+ O=vec4(s,0.,0.,1.);}`;
+const FS_PACK = HDR + `uniform sampler2D uLat;out vec4 O;
+void main(){int b=int(gl_FragCoord.x);
+ O=vec4(texelFetch(uLat,ivec2(0,b),0).r,texelFetch(uLat,ivec2(1,b),0).r,0.,1.);}`;
+const FS_MOSAIC = HDR + `uniform sampler2D uAct;uniform float uSize;uniform int uG,uImg;out vec4 O;
+float px3(int t,ivec2 p,int c){p=clamp(p,ivec2(0),ivec2(uImg-1));return texelFetch(uAct,ivec2((p.y*uImg+p.x)*3+c,t),0).r;}
+void main(){
+ vec2 fc=vec2(gl_FragCoord.x,uSize-gl_FragCoord.y);
+ float cell=uSize/float(uG);
+ int gx=clamp(int(fc.x/cell),0,uG-1),gy=clamp(int(fc.y/cell),0,uG-1);
+ int t=gy*uG+gx;
+ vec2 f=(fc-vec2(float(gx),float(gy))*cell)/cell*float(uImg)-0.5;
+ ivec2 p0=ivec2(floor(f));vec2 fr=f-floor(f);
+ vec3 col;
+ for(int c=0;c<3;c++){
+  float c00=px3(t,p0,c),c10=px3(t,p0+ivec2(1,0),c),c01=px3(t,p0+ivec2(0,1),c),c11=px3(t,p0+ivec2(1,1),c);
+  col[c]=mix(mix(c00,c10,fr.x),mix(c01,c11,fr.x),fr.y);
+ }
+ O=vec4(col,1.);}`;
+const FS_OUTVIEW = HDR + `uniform sampler2D uAct;uniform float uSize;uniform int uImg;out vec4 O;
+float px3(ivec2 p,int c){p=clamp(p,ivec2(0),ivec2(uImg-1));return texelFetch(uAct,ivec2((p.y*uImg+p.x)*3+c,0),0).r;}
+float wcr(float x){x=abs(x);
+ if(x<1.) return ((1.5*x-2.5)*x)*x+1.;
+ if(x<2.) return ((-0.5*x+2.5)*x-4.)*x+2.;
+ return 0.;}
+void main(){
+ vec2 fc=vec2(gl_FragCoord.x,uSize-gl_FragCoord.y);
+ vec2 f=fc/uSize*float(uImg)-0.5;
+ ivec2 p0=ivec2(floor(f));vec2 fr=f-floor(f);
+ vec3 col=vec3(0.);
+ for(int j=-1;j<=2;j++){float wy=wcr(float(j)-fr.y);
+  for(int i=-1;i<=2;i++){float wx=wcr(float(i)-fr.x)*wy;
+   ivec2 p=p0+ivec2(i,j);
+   col+=wx*vec3(px3(p,0),px3(p,1),px3(p,2));}}
+ O=vec4(clamp(col,0.,1.),1.);}`;
+
+let FBO, lastN = 0, unit = 0, DRAWBUFS;
+let pGather, pFwd, pNoise, pDout, pDback, pGradW, pGradB, pAdam, pLoss, pPack, pMosaic, pOutview;
+function compile(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+}
+let vsObj = null;
+function prog(fs) {
+    const p = gl.createProgram();
+    gl.attachShader(p, vsObj); gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    return { p, u: {} };
+}
+const U = (pr, n) => pr.u[n] !== undefined ? pr.u[n] : (pr.u[n] = gl.getUniformLocation(pr.p, n));
+function tex(w, h, internal) {
+    const t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, internal || gl.R32F, w, h);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return { t, w, h };
+}
+function upload(tx, x, y, w, h, data, fmt) {
+    gl.bindTexture(gl.TEXTURE_2D, tx.t);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, w, h, fmt || gl.RED, gl.FLOAT, data);
+}
+function bindTx(pr, name, tx) {
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tx.t);
+    gl.uniform1i(U(pr, name), unit++);
+}
+const setI = (pr, n, v) => gl.uniform1i(U(pr, n), v);
+const setF = (pr, n, v) => gl.uniform1f(U(pr, n), v);
+function run(pr, outs, w, cnt, y0, setup) {
+    gl.useProgram(pr.p);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, FBO);
+    const n = outs.length, m = Math.max(n, lastN);
+    for (let i = 0; i < m; i++)
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, i < n ? outs[i].t : null, 0);
+    lastN = n;
+    gl.drawBuffers(DRAWBUFS[n - 1]);
+    gl.viewport(0, y0, w, cnt);
+    unit = 0;
+    setup(pr);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+// per-layer parameter textures (ping-pong for W/B and their Adam moments)
+let layers = [], TR, dots, mos, cur, dataTex;
+const idxArr = new Float32Array(BS), noiseArr = new Float32Array(2 * BS);
+const lossBuf = new Float32Array(BS * 4), dotBuf = new Float32Array(NMAX * 4);
+const mosLatBuf = new Float32Array(2 * MCH), curLatBuf = new Float32Array(2);
+const idxAllArr = new Float32Array(NMAX);
+
+function initGL() {
+    gl = glCv.getContext('webgl2', { alpha: false, depth: false, stencil: false, antialias: false });
+    if (!gl) throw new Error('no webgl2');
+    if (!gl.getExtension('EXT_color_buffer_float')) throw new Error('no float render');
+    if (gl.getParameter(gl.MAX_TEXTURE_SIZE) < D) throw new Error('texture too small');
+    vsObj = compile(gl.VERTEX_SHADER, VS);
+    FBO = gl.createFramebuffer();
+    DRAWBUFS = [[gl.COLOR_ATTACHMENT0],
+        [gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1],
+        [gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]];
+    pGather = prog(FS_GATHER); pFwd = prog(FS_FORWARD); pNoise = prog(FS_NOISE);
+    pDout = prog(FS_DOUT); pDback = prog(FS_DBACK); pGradW = prog(FS_GRADW);
+    pGradB = prog(FS_GRADB); pAdam = prog(FS_ADAM); pLoss = prog(FS_LOSS);
+    pPack = prog(FS_PACK); pMosaic = prog(FS_MOSAIC); pOutview = prog(FS_OUTVIEW);
+
+    for (let l = 0; l < L; l++) {
+        const rows = SIZES[l + 1], cols = SIZES[l];
+        layers.push({
+            rows, cols, pi: 0,
+            W: [tex(cols, rows), tex(cols, rows)], M: [tex(cols, rows), tex(cols, rows)], V: [tex(cols, rows), tex(cols, rows)],
+            B: [tex(rows, 1), tex(rows, 1)], BM: [tex(rows, 1), tex(rows, 1)], BV: [tex(rows, 1), tex(rows, 1)],
+            gW: tex(cols, rows), gB: tex(rows, 1)
+        });
+    }
+    dataTex = tex(D, NMAX);
+    TR = {                                                     // training pipeline (batch = BS)
+        A: SIZES.map(s => tex(s, BS)),
+        DEL: SIZES.slice(1).map(s => tex(s, BS)),
+        latClean: tex(2, BS), noise: tex(2, BS), idx: tex(BS, 1),
+        lossOut: tex(BS, 1, gl.RGBA32F)
+    };
+    dots = {                                                   // encode-all pipeline (batch = NMAX)
+        A: [tex(D, NMAX), tex(SIZES[1], NMAX), tex(SIZES[2], NMAX), tex(2, NMAX)],
+        idxAll: tex(NMAX, 1), pack: tex(NMAX, 1, gl.RGBA32F)
+    };
+    mos = { lat: tex(2, GRID * GRID), A: [tex(SIZES[4], GRID * GRID), tex(SIZES[5], GRID * GRID), tex(D, GRID * GRID)] };
+    cur = { lat: tex(2, 1), A: [tex(SIZES[4], 1), tex(SIZES[5], 1), tex(D, 1)] };
+}
+function initNet() {
+    tAdam = 0;
+    const zero = new Float32Array(D * 256);
+    for (let l = 0; l < L; l++) {
+        const Y = layers[l], rows = Y.rows, cols = Y.cols, w = new Float32Array(rows * cols);
+        if (ACTN[l] === 'relu') { const s = Math.sqrt(2 / cols); for (let i = 0; i < w.length; i++) w[i] = randn() * s; }
+        else { const s = Math.sqrt(6 / (cols + rows)); for (let i = 0; i < w.length; i++) w[i] = (Math.random() * 2 - 1) * s; }
+        Y.pi = 0;
+        upload(Y.W[0], 0, 0, cols, rows, w);
+        upload(Y.M[0], 0, 0, cols, rows, zero.subarray(0, rows * cols));
+        upload(Y.V[0], 0, 0, cols, rows, zero.subarray(0, rows * cols));
+        upload(Y.B[0], 0, 0, rows, 1, zero.subarray(0, rows));
+        upload(Y.BM[0], 0, 0, rows, 1, zero.subarray(0, rows));
+        upload(Y.BV[0], 0, 0, rows, 1, zero.subarray(0, rows));
+    }
+}
+function fwd(l, inT, outT, y0, cnt) {
+    const Y = layers[l];
+    run(pFwd, [outT], SIZES[l + 1], cnt, y0, pr => {
+        bindTx(pr, 'uW', Y.W[Y.pi]); bindTx(pr, 'uB', Y.B[Y.pi]); bindTx(pr, 'uA', inT);
+        setI(pr, 'uCols', SIZES[l]); setI(pr, 'uAct', ACODE[ACTN[l]]);
+    });
+}
+function trainStep(lr0) {
+    for (let b = 0; b < BS; b++) idxArr[b] = (Math.random() * data.length) | 0;
+    const sg = noiseSigma();
+    for (let k = 0; k < 2 * BS; k++) noiseArr[k] = randn() * sg;
+    upload(TR.idx, 0, 0, BS, 1, idxArr);
+    upload(TR.noise, 0, 0, 2, BS, noiseArr);
+    run(pGather, [TR.A[0]], D, BS, 0, pr => { bindTx(pr, 'uData', dataTex); bindTx(pr, 'uIdx', TR.idx); });
+    fwd(0, TR.A[0], TR.A[1], 0, BS);
+    fwd(1, TR.A[1], TR.A[2], 0, BS);
+    fwd(2, TR.A[2], TR.latClean, 0, BS);
+    run(pNoise, [TR.A[3]], 2, BS, 0, pr => { bindTx(pr, 'uA', TR.latClean); bindTx(pr, 'uN', TR.noise); });
+    fwd(3, TR.A[3], TR.A[4], 0, BS);
+    fwd(4, TR.A[4], TR.A[5], 0, BS);
+    fwd(5, TR.A[5], TR.A[6], 0, BS);
+    run(pDout, [TR.DEL[5]], D, BS, 0, pr => { bindTx(pr, 'uOut', TR.A[6]); bindTx(pr, 'uX', TR.A[0]); });
+    const invB = 1 / BS;
+    for (let l = L - 1; l >= 0; l--) {
+        const Y = layers[l];
+        run(pGradW, [Y.gW], Y.cols, Y.rows, 0, pr => {
+            bindTx(pr, 'uDel', TR.DEL[l]); bindTx(pr, 'uA', TR.A[l]);
+            setI(pr, 'uBatch', BS); setF(pr, 'uInvB', invB);
+        });
+        run(pGradB, [Y.gB], Y.rows, 1, 0, pr => {
+            bindTx(pr, 'uDel', TR.DEL[l]); setI(pr, 'uBatch', BS); setF(pr, 'uInvB', invB);
+        });
+        if (l > 0) run(pDback, [TR.DEL[l - 1]], SIZES[l], BS, 0, pr => {
+            bindTx(pr, 'uW', Y.W[Y.pi]); bindTx(pr, 'uDel', TR.DEL[l]);
+            bindTx(pr, 'uA', TR.A[l]); bindTx(pr, 'uLat', TR.latClean);
+            setI(pr, 'uRows', Y.rows); setI(pr, 'uAct', ACODE[ACTN[l - 1]]);
+            setF(pr, 'uLambda', l - 1 === LATL ? LAMBDA : 0);
+        });
+    }
+    tAdam++;
+    const lrEff = lr0 * (tAdam < WARM ? tAdam / WARM : 1);
+    const c1 = 1 - Math.pow(0.9, tAdam), c2 = 1 - Math.pow(0.999, tAdam);
+    for (let l = 0; l < L; l++) {
+        const Y = layers[l], q = Y.pi, r = 1 - q;
+        run(pAdam, [Y.W[r], Y.M[r], Y.V[r]], Y.cols, Y.rows, 0, pr => {
+            bindTx(pr, 'uW', Y.W[q]); bindTx(pr, 'uM', Y.M[q]); bindTx(pr, 'uV', Y.V[q]); bindTx(pr, 'uG', Y.gW);
+            setF(pr, 'uLr', lrEff); setF(pr, 'uC1', c1); setF(pr, 'uC2', c2);
+        });
+        run(pAdam, [Y.B[r], Y.BM[r], Y.BV[r]], Y.rows, 1, 0, pr => {
+            bindTx(pr, 'uW', Y.B[q]); bindTx(pr, 'uM', Y.BM[q]); bindTx(pr, 'uV', Y.BV[q]); bindTx(pr, 'uG', Y.gB);
+            setF(pr, 'uLr', lrEff); setF(pr, 'uC1', c1); setF(pr, 'uC2', c2);
+        });
+        Y.pi = r;
+    }
+}
+function readLoss() {   // one small readback per frame = GPU sync point, keeps latency bounded
+    run(pLoss, [TR.lossOut], BS, 1, 0, pr => {
+        bindTx(pr, 'uOut', TR.A[6]); bindTx(pr, 'uX', TR.A[0]); setI(pr, 'uD', D);
+    });
+    gl.readPixels(0, 0, BS, 1, gl.RGBA, gl.FLOAT, lossBuf);
+    let s = 0;
+    for (let b = 0; b < BS; b++) s += lossBuf[b * 4];
+    return s / (BS * D);
+}
+function updateDots() {   // re-encode ALL samples on the GPU, read latents back in one go
+    const N = data.length; if (!N) return;
+    run(pGather, [dots.A[0]], D, N, 0, pr => { bindTx(pr, 'uData', dataTex); bindTx(pr, 'uIdx', dots.idxAll); });
+    fwd(0, dots.A[0], dots.A[1], 0, N);
+    fwd(1, dots.A[1], dots.A[2], 0, N);
+    fwd(2, dots.A[2], dots.A[3], 0, N);
+    run(pPack, [dots.pack], N, 1, 0, pr => bindTx(pr, 'uLat', dots.A[3]));
+    gl.readPixels(0, 0, N, 1, gl.RGBA, gl.FLOAT, dotBuf);
+    for (let i = 0; i < N; i++) dotPos[i] = { x: dotBuf[i * 4], y: dotBuf[i * 4 + 1] };
+}
+let mosChunk = 0;
+function updateMosaic(k) {   // decode a chunk of the 16×16 grid per frame; full refresh every 4 frames
+    for (let c = 0; c < k; c++) {
+        const start = mosChunk * MCH;
+        for (let r = 0; r < MCH; r++) {
+            const t = start + r, gx = t % GRID, gy = (t / GRID) | 0;
+            mosLatBuf[r * 2] = px2z((gx + 0.5) * CELL);
+            mosLatBuf[r * 2 + 1] = px2z((gy + 0.5) * CELL);
+        }
+        upload(mos.lat, 0, start, 2, MCH, mosLatBuf);
+        fwd(3, mos.lat, mos.A[0], start, MCH);
+        fwd(4, mos.A[0], mos.A[1], start, MCH);
+        fwd(5, mos.A[1], mos.A[2], start, MCH);
+        mosChunk = (mosChunk + 1) % CHUNKS;
+    }
+}
+function renderMosaicGL() {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, glCv.width, glCv.height);
+    gl.useProgram(pMosaic.p);
+    unit = 0;
+    bindTx(pMosaic, 'uAct', mos.A[2]);
+    setF(pMosaic, 'uSize', glCv.width); setI(pMosaic, 'uG', GRID); setI(pMosaic, 'uImg', IMG);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+function renderOutputGL() {
+    curLatBuf[0] = zCur[0]; curLatBuf[1] = zCur[1];
+    upload(cur.lat, 0, 0, 2, 1, curLatBuf);
+    fwd(3, cur.lat, cur.A[0], 0, 1);
+    fwd(4, cur.A[0], cur.A[1], 0, 1);
+    fwd(5, cur.A[1], cur.A[2], 0, 1);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, glCv.width, glCv.height);
+    gl.useProgram(pOutview.p);
+    unit = 0;
+    bindTx(pOutview, 'uAct', cur.A[2]);
+    setF(pOutview, 'uSize', glCv.width); setI(pOutview, 'uImg', IMG);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+function countParams() { let p = 0; for (let l = 0; l < L; l++) p += SIZES[l] * SIZES[l + 1] + SIZES[l + 1]; return p; }
+
+// ==================== DATA: sprites + augmentations ====================
+const SPRITES = [
+    { src: 'sprites/klee.png',    color: '#ff6a6a' },
+    { src: 'sprites/cirno.png',   color: '#6ab8ff' },
+    { src: 'sprites/flandre.png', color: '#ffd75a' },
+];
+const EXTRA_COLORS = ['#7effc0', '#ff9de0', '#c0a0ff'];
+const AUG_PER = 15;
+let classes = [], data = [];      // data: {cls, orig} — pixels live in dataTex on the GPU
+const acan = document.createElement('canvas'); acan.width = IMG; acan.height = IMG;
+const actx = acan.getContext('2d', { willReadFrequently: true });
+
+function sampleFrom(img, aug) {
+    actx.fillStyle = '#000'; actx.fillRect(0, 0, IMG, IMG);
+    actx.save(); actx.translate(IMG / 2, IMG / 2);
+    if (aug) {
+        actx.translate((Math.random() * 2 - 1) * 3, (Math.random() * 2 - 1) * 3);
+        const s = 0.92 + Math.random() * 0.2;
+        actx.scale(Math.random() < 0.5 ? -s : s, s);
+        actx.rotate((Math.random() * 2 - 1) * 0.1);
+    }
+    actx.drawImage(img, -IMG / 2, -IMG / 2, IMG, IMG);
+    actx.restore();
+    const d = actx.getImageData(0, 0, IMG, IMG).data, x = new Float32Array(D);
+    for (let i = 0; i < IMG * IMG; i++) { x[i * 3] = d[i * 4] / 255; x[i * 3 + 1] = d[i * 4 + 1] / 255; x[i * 3 + 2] = d[i * 4 + 2] / 255; }
+    return x;
+}
+function pushSample(x, cls, orig) {
+    upload(dataTex, 0, data.length, D, 1, x);
+    data.push({ cls, orig });
+}
+function addClass(img, color) {
+    const cls = classes.length;
+    classes.push({ img, color });
+    pushSample(sampleFrom(img, false), cls, true);
+    for (let i = 0; i < AUG_PER; i++) pushSample(sampleFrom(img, true), cls, false);
+    for (let i = 0; i < data.length; i++) idxAllArr[i] = i;
+    upload(dots.idxAll, 0, 0, data.length, 1, idxAllArr.subarray(0, data.length));
+    dotPos = data.map(() => null);
+    const tc = document.createElement('canvas'); tc.width = 56; tc.height = 56;
+    tc.getContext('2d').drawImage(img, 0, 0, 56, 56);
+    tc.style.borderColor = color;
+    document.getElementById('thumbs').appendChild(tc);
+    document.getElementById('epochs').textContent = '0';
+}
+
+// ==================== VISUALIZATION (2D overlay on top of GL renders) ====================
+const mapCv = document.getElementById('map'), mctx = mapCv.getContext('2d');
+const outCv = document.getElementById('out'), octx = outCv.getContext('2d');
+const chartCv = document.getElementById('chart'), cctx = chartCv.getContext('2d');
+const CW = 640, CH = 80;
+for (const cv of [mapCv, outCv]) { cv.width = cv.height = Math.round(MS * DPR); cv.style.width = '360px'; }
+chartCv.width = Math.round(CW * DPR); chartCv.height = Math.round(CH * DPR);
+mctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+octx.setTransform(DPR, 0, 0, DPR, 0, 0);
+cctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+const z2px = z => (z + ZR) / (2 * ZR) * MS, px2z = p => p / MS * 2 * ZR - ZR;
+let dotPos = [];
+let zCur = [0, 0];
+
+function adaptZR() {
+    let m = 0;
+    for (const p of dotPos) if (p) { const a = Math.max(Math.abs(p.x), Math.abs(p.y)); if (a > m) m = a; }
+    if (m > 0) ZR += (Math.max(1, m * 1.2) - ZR) * 0.04;
+}
+function drawMap() {
+    mctx.clearRect(0, 0, MS, MS);
+    mctx.globalAlpha = 0.55; mctx.drawImage(glCv, 0, 0, MS, MS); mctx.globalAlpha = 1;
+    mctx.strokeStyle = 'rgba(176,96,255,0.25)'; mctx.lineWidth = 1;
+    mctx.beginPath();
+    mctx.moveTo(z2px(0), 0); mctx.lineTo(z2px(0), MS); mctx.moveTo(0, z2px(0)); mctx.lineTo(MS, z2px(0));
+    mctx.stroke();
+    for (let i = 0; i < data.length; i++) {
+        const p = dotPos[i]; if (!p) continue;
+        const c = classes[data[i].cls].color;
+        mctx.beginPath(); mctx.arc(z2px(p.x), z2px(p.y), data[i].orig ? 5.5 : 3, 0, TAU);
+        mctx.fillStyle = c; mctx.fill();
+        if (data[i].orig) { mctx.strokeStyle = '#fff'; mctx.lineWidth = 1.5; mctx.stroke(); }
+    }
+    const cx = z2px(zCur[0]), cy = z2px(zCur[1]);
+    mctx.strokeStyle = '#efe7ff'; mctx.lineWidth = 1;
+    mctx.beginPath(); mctx.moveTo(cx - 11, cy); mctx.lineTo(cx + 11, cy); mctx.moveTo(cx, cy - 11); mctx.lineTo(cx, cy + 11); mctx.stroke();
+    mctx.beginPath(); mctx.arc(cx, cy, 7, 0, TAU);
+    mctx.strokeStyle = '#b060ff'; mctx.lineWidth = 2.5; mctx.shadowColor = 'rgba(176,96,255,0.9)'; mctx.shadowBlur = 8; mctx.stroke(); mctx.shadowBlur = 0;
+}
+function drawOutput() {
+    renderOutputGL();
+    octx.clearRect(0, 0, MS, MS);
+    octx.drawImage(glCv, 0, 0, MS, MS);
+}
+
+// ---- loss curve
+let lossHist = [], smoothL = null, histStride = 1, strideCnt = 0;
+function pushLoss(v) {
+    smoothL = smoothL === null ? v : smoothL * 0.95 + v * 0.05;
+    if (++strideCnt >= histStride) {
+        strideCnt = 0; lossHist.push(smoothL);
+        if (lossHist.length > 420) { lossHist = lossHist.filter((_, i) => i % 2 === 0); histStride *= 2; }
+    }
+}
+function drawChart() {
+    const g = cctx;
+    g.clearRect(0, 0, CW, CH);
+    if (lossHist.length < 2) return;
+    let mn = Infinity, mx = -Infinity;
+    for (const v of lossHist) { const t = Math.log10(Math.max(1e-6, v)); if (t < mn) mn = t; if (t > mx) mx = t; }
+    if (mx - mn < 0.4) { const c = (mx + mn) / 2; mn = c - 0.2; mx = c + 0.2; }
+    const pad = 0.06 * (mx - mn); mn -= pad; mx += pad;
+    const Y = t => CH - (t - mn) / (mx - mn) * CH;
+    g.strokeStyle = 'rgba(176,96,255,0.18)'; g.fillStyle = 'rgba(239,231,255,0.4)'; g.font = '9px monospace'; g.lineWidth = 1;
+    for (let e = Math.ceil(mn); e <= Math.floor(mx); e++) {
+        const y = Y(e); g.beginPath(); g.moveTo(0, y); g.lineTo(CW, y); g.stroke(); g.fillText('1e' + e, 4, y - 3);
+    }
+    g.beginPath();
+    for (let i = 0; i < lossHist.length; i++) {
+        const x = i / (lossHist.length - 1) * CW, y = Y(Math.log10(Math.max(1e-6, lossHist[i])));
+        i ? g.lineTo(x, y) : g.moveTo(x, y);
+    }
+    g.strokeStyle = '#b060ff'; g.lineWidth = 2; g.shadowColor = 'rgba(176,96,255,0.7)'; g.shadowBlur = 6; g.stroke(); g.shadowBlur = 0;
+}
+
+// ==================== STATE + MAIN LOOP ====================
+let running = true, lr = 0.002, budget = 22, steps = 0, lastLoss = 0;
+let stepAcc = 0, spsT = performance.now(), sps = 0, frame = 0, maxSteps = 6;
+function updateStats() {
+    document.getElementById('epoch').textContent = steps.toLocaleString(T().locale);
+    document.getElementById('epochs').textContent = data.length ? Math.floor(steps * BS / data.length).toLocaleString(T().locale) : '0';
+    const sl = smoothL === null ? lastLoss : smoothL;
+    document.getElementById('loss').textContent = steps ? sl.toFixed(4) : '—';
+    document.getElementById('psnr').textContent = steps ? (10 * Math.log10(1 / Math.max(1e-6, sl))).toFixed(1) + ' dB' : '—';
+    document.getElementById('sps').textContent = steps ? '' + Math.round(sps) : '—';
+}
+function loop() {
+    if (data.length) {
+        if (running) {
+            const t0 = performance.now();
+            let n = 0;
+            do { trainStep(lr); steps++; stepAcc++; n++; } while (performance.now() - t0 < budget && n < maxSteps);
+            lastLoss = readLoss();                            // syncs the GPU — total time includes queued work
+            pushLoss(lastLoss);
+            const total = performance.now() - t0;             // adapt steps/frame to the real GPU cost
+            if (total > budget * 1.35 && maxSteps > 1) maxSteps = Math.max(1, (maxSteps * 0.8) | 0);
+            else if (total < budget && n >= maxSteps) maxSteps = Math.min(3000, maxSteps + Math.max(2, maxSteps >> 2));
+        }
+        const now = performance.now();
+        if (now - spsT > 500) { sps = stepAcc / ((now - spsT) / 1000); stepAcc = 0; spsT = now; }
+        tickTour();
+        if (frame % 2 === 0 || !running) updateDots();
+        adaptZR();
+        updateMosaic(running ? 1 : 2);
+        renderMosaicGL();
+        drawMap();
+        drawOutput();
+        drawChart();
+        updateStats();
+    }
+    frame++;
+    requestAnimationFrame(loop);
+}
+
+// ==================== TOUR (animated path through class centroids) ====================
+let tourOn = false, tourT0 = 0;
+const tourBtn = document.getElementById('tour');
+function centroids() {
+    const cs = classes.map(() => [0, 0, 0]);
+    for (let i = 0; i < data.length; i++) {
+        const p = dotPos[i]; if (!p) continue;
+        const c = cs[data[i].cls]; c[0] += p.x; c[1] += p.y; c[2]++;
+    }
+    return cs.filter(c => c[2] > 0).map(c => [c[0] / c[2], c[1] / c[2]]);
+}
+function tickTour() {
+    if (!tourOn) return;
+    const cs = centroids(); if (cs.length < 2) return;
+    const LEG = 2500, t = performance.now() - tourT0;
+    const seg = Math.floor(t / LEG) % cs.length, u = (t % LEG) / LEG, e = 0.5 - 0.5 * Math.cos(Math.PI * u);
+    const a = cs[seg], b = cs[(seg + 1) % cs.length], w = t / 900;
+    zCur = [a[0] + (b[0] - a[0]) * e + Math.cos(w) * 0.05, a[1] + (b[1] - a[1]) * e + Math.sin(w) * 0.05];
+}
+tourBtn.addEventListener('click', () => { tourOn = !tourOn; tourT0 = performance.now(); tourBtn.classList.toggle('active', tourOn); });
+
+// ==================== INTERACTION ====================
+let dragging = false;
+function setFromEvent(e) {
+    const r = mapCv.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width * MS, y = (e.clientY - r.top) / r.height * MS;
+    zCur = [Math.max(-ZR, Math.min(ZR, px2z(x))), Math.max(-ZR, Math.min(ZR, px2z(y)))];
+    if (tourOn) { tourOn = false; tourBtn.classList.remove('active'); }
+}
+mapCv.addEventListener('pointerdown', e => { dragging = true; mapCv.setPointerCapture(e.pointerId); setFromEvent(e); });
+mapCv.addEventListener('pointermove', e => { if (dragging) setFromEvent(e); });
+mapCv.addEventListener('pointerup', () => dragging = false);
+
+const playBtn = document.getElementById('play');
+function syncPlay() { playBtn.textContent = running ? T().pause : T().train; playBtn.classList.toggle('active', running); }
+playBtn.addEventListener('click', () => { running = !running; syncPlay(); });
+syncPlay();
+document.getElementById('reset').addEventListener('click', () => {
+    initNet(); steps = 0; lastLoss = 0; lossHist = []; smoothL = null; histStride = 1; strideCnt = 0; ZR = 1.15;
+    document.getElementById('params').textContent = countParams().toLocaleString(T().locale);
+    updateStats();
+});
+function slider(id, valId, fmt, cb) {
+    const el = document.getElementById(id), out = document.getElementById(valId);
+    const upd = () => { const v = cb(parseFloat(el.value)); out.textContent = fmt(v); };
+    el.addEventListener('input', upd); upd();
+}
+slider('lr', 'lrVal', v => v < 0.001 ? v.toFixed(4) : v.toFixed(3), v => (lr = Math.pow(10, v), lr));
+slider('budget', 'budgetVal', v => '' + v, v => (budget = v, v));
+
+const fileInput = document.getElementById('file');
+document.getElementById('upload').addEventListener('click', () => {
+    if (classes.length >= 6) { document.getElementById('err').textContent = T().errMax; return; }
+    fileInput.click();
+});
+fileInput.addEventListener('change', () => {
+    const f = fileInput.files[0]; if (!f) return;
+    const url = URL.createObjectURL(f), img = new Image();
+    img.onload = () => {
+        URL.revokeObjectURL(url);
+        // center square crop
+        const s = Math.min(img.naturalWidth, img.naturalHeight);
+        const cc = document.createElement('canvas'); cc.width = 128; cc.height = 128;
+        cc.getContext('2d').drawImage(img, (img.naturalWidth - s) / 2, (img.naturalHeight - s) / 2, s, s, 0, 0, 128, 128);
+        const sq = new Image();
+        sq.onload = () => addClass(sq, EXTRA_COLORS[(classes.length - SPRITES.length) % EXTRA_COLORS.length]);
+        sq.src = cc.toDataURL();
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); document.getElementById('err').textContent = T().errImg; };
+    img.src = url;
+});
+
+// ==================== START ====================
+applyLang();
+try {
+    initGL();
+    initNet();
+} catch (e) {
+    glFail();
+    throw e;
+}
+glCv.addEventListener('webglcontextlost', ev => { ev.preventDefault(); glFail(); });
+document.getElementById('params').textContent = countParams().toLocaleString(T().locale);
+Promise.all(SPRITES.map(sp => new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res({ img, color: sp.color });
+    img.onerror = rej;
+    img.src = sp.src;
+}))).then(loaded => {
+    for (const { img, color } of loaded) addClass(img, color);
+    loop();
+}).catch(() => { document.getElementById('err').textContent = T().errLoad; });
+</script>
+</body>
+</html>
