@@ -68,12 +68,28 @@
                 <button id="tour">🎬 Prehliadka</button>
             </div>
             <div class="row">
+                <button class="active" id="sharp">✨ Sharpness loss</button>
                 <button id="upload">🖼 Pridať vlastný obrázok</button>
                 <input type="file" id="file" accept="image/*" style="display:none">
             </div>
 
             <div class="label">Rýchlosť učenia (Adam)</div>
             <div class="row"><input type="range" id="lr" min="-4" max="-2" step="0.05" value="-2.7"><span class="val" id="lrVal">0.002</span></div>
+
+            <div class="label" id="resLabel">Resolution (higher = sharper, slower)</div>
+            <div class="row" id="resBtns">
+                <button data-res="48">48²</button>
+                <button data-res="64" class="active">64²</button>
+                <button data-res="96">96²</button>
+            </div>
+
+            <div class="label" id="modeLabel">Compute backend</div>
+            <div class="row" id="modeBtns">
+                <button data-mode="cpu" class="active">🧮 CPU</button>
+                <button data-mode="worker">🧵 Worker</button>
+                <button data-mode="webgpu">⚡ WebGPU</button>
+            </div>
+            <div class="row" style="margin-top:2px"><span id="modeStatus" style="font-size:11px; opacity:0.7"></span></div>
 
             <div class="label">Tréning — ms na snímok</div>
             <div class="row"><input type="range" id="budget" min="5" max="50" step="1" value="22"><span class="val" id="budgetVal">22</span></div>
@@ -104,7 +120,7 @@ const STR = {
         locale: 'en', toggle: '🇸🇰 SK',
         title: '🧭🧠 Latent Space Explorer',
         h1: '🧭🧠 Latent Space Explorer',
-        sub: `An <b>autoencoder</b> learns right in your browser to squeeze each image (48×48×3 = 6,912 numbers)
+        sub: `An <b>autoencoder</b> learns right in your browser to squeeze each image (thousands of pixel numbers)
         down to <b>two numbers</b> — a latent code — and then unpack it back. <b>Drag the cursor around the map</b>
         and watch what the decoder paints between the images it has learned. The mosaic behind the map shows what
         "lives" in every corner of the space; the colored dots are the training samples. Give it a minute to train 🙂
@@ -112,22 +128,31 @@ const STR = {
         &nbsp;·&nbsp;<a href="https://m1omg.github.io/neural-oliver/">← Neural network learns Oliver</a>`,
         tData: '🖼 Data', tMap: '🗺 Latent space — drag me!', tDec: '🎨 Decoder paints', tChart: '📉 Loss curve (log)',
         pause: '⏸ Pause', train: '▶ Train', reset: '⟲ Reset', tour: '🎬 Tour', upload: '🖼 Add your own image',
+        sharp: '✨ Sharpness loss', res: 'Resolution (higher = sharper, slower)',
+        modeLabel: 'Compute backend',
+        workerOn: '🧵 Worker: training off the main thread — UI stays smooth.',
+        gpuChecking: '⚡ WebGPU: checking device…',
+        gpuNo: '⚡ WebGPU not available on this device — staying on CPU.',
+        gpuFail: '⚡ WebGPU self-test failed — fell back to CPU.',
+        gpuOn: '⚡ WebGPU: active — GPU-accelerated training.',
         lLr: 'Learning rate (Adam)', lBudget: 'Training — ms per frame',
         kStep: 'Step', kEpoch: 'Epoch', kLoss: 'Loss (MSE)', kPsnr: 'PSNR', kParams: 'Parameters', kSps: 'Steps/s',
-        hint: `Network: <b>6912 → 128 → 32 → 2 → 32 → 128 → 6912</b> (ReLU, linear latent with a gentle pull
+        hint: `Network: <b>N → 128 → 32 → 2 → 32 → 128 → N</b> (N = width·height·3; ReLU, linear latent with a gentle pull
         toward the origin — a tanh bottleneck would saturate and freeze the encoder; sigmoid output), trained from
         scratch with backpropagation + Adam. Each image gets <b>16 augmented variants</b> (shift, zoom, rotate,
         mirror) so the map isn't just three lonely points. A little <b>noise</b> is injected into the latent during
-        training to keep the space between images smooth. Large dots with an outline are the originals.`,
+        training to keep the space between images smooth. <b>✨ Sharpness loss</b> also matches the image
+        <i>gradients</i> (edges), not just pixels — plain MSE rewards averaging, which blurs; toggle it off to
+        watch the reconstructions turn to mush. Large dots with an outline are the originals.`,
         errLoad: '⚠ Sprites failed to load (serve over HTTP, not file://).',
         errImg: '⚠ This file can’t be loaded as an image.',
-        errMax: '⚠ Maximum of 6 images.'
+        errMax: '⚠ Maximum of 12 images.'
     },
     sk: {
         locale: 'sk', toggle: '🇬🇧 EN',
         title: '🧭🧠 Prieskumník latentného priestoru',
         h1: '🧭🧠 Prieskumník latentného priestoru',
-        sub: `<b>Autoenkodér</b> sa priamo v prehliadači učí stlačiť každý obrázok (48×48×3 = 6 912 čísel)
+        sub: `<b>Autoenkodér</b> sa priamo v prehliadači učí stlačiť každý obrázok (tisíce pixelových čísel)
         do <b>dvoch čísel</b> — latentného kódu — a potom ho z nich zase rozbaliť. <b>Ťahaj kurzor po mape</b> a sleduj,
         čo dekóder vykreslí medzi naučenými obrázkami. Mozaika v pozadí mapy ukazuje, čo „žije" v každom kúte
         priestoru, farebné bodky sú tréningové vzorky. Chvíľu počkaj, kým sa sieť natrénuje 🙂
@@ -135,16 +160,25 @@ const STR = {
         &nbsp;·&nbsp;<a href="https://m1omg.github.io/neural-oliver/">← Neurónka sa učí Olivera</a>`,
         tData: '🖼 Dáta', tMap: '🗺 Latentný priestor — ťahaj!', tDec: '🎨 Dekóder kreslí', tChart: '📉 Priebeh straty (log)',
         pause: '⏸ Pauza', train: '▶ Trénuj', reset: '⟲ Reset', tour: '🎬 Prehliadka', upload: '🖼 Pridať vlastný obrázok',
+        sharp: '✨ Ostrostná strata', res: 'Rozlíšenie (vyššie = ostrejšie, pomalšie)',
+        modeLabel: 'Výpočtový backend',
+        workerOn: '🧵 Worker: tréning mimo hlavného vlákna — UI ostáva plynulé.',
+        gpuChecking: '⚡ WebGPU: kontrolujem zariadenie…',
+        gpuNo: '⚡ WebGPU nie je na tomto zariadení dostupné — ostávam na CPU.',
+        gpuFail: '⚡ WebGPU self-test zlyhal — návrat na CPU.',
+        gpuOn: '⚡ WebGPU: aktívne — tréning akcelerovaný GPU.',
         lLr: 'Rýchlosť učenia (Adam)', lBudget: 'Tréning — ms na snímok',
         kStep: 'Krok', kEpoch: 'Epocha', kLoss: 'Strata (MSE)', kPsnr: 'PSNR', kParams: 'Parametre', kSps: 'Krokov/s',
-        hint: `Sieť: <b>6912 → 128 → 32 → 2 → 32 → 128 → 6912</b> (ReLU, lineárny latent s jemným
+        hint: `Sieť: <b>N → 128 → 32 → 2 → 32 → 128 → N</b> (N = šírka·výška·3; ReLU, lineárny latent s jemným
         ťahom k stredu — tanh by sa v úzkom hrdle saturoval, výstup = sigmoid),
         tréning od nuly cez backpropagation + Adam. Každý obrázok má <b>16 augmentovaných variantov</b>
         (posun, zväčšenie, otočenie, zrkadlenie), aby mapa nebola len 3 osamelé body. Do latentu sa počas
-        tréningu pridáva malý <b>šum</b>, nech je priestor medzi obrázkami hladký. Veľké bodky s obrysom sú originály.`,
+        tréningu pridáva malý <b>šum</b>, nech je priestor medzi obrázkami hladký. <b>✨ Ostrostná strata</b>
+        navyše zhoduje <i>gradienty</i> (okraje) obrázka, nielen pixely — samotné MSE odmeňuje priemerovanie, čo
+        rozmazáva; vypni ju a sleduj, ako sa rekonštrukcie rozmažú. Veľké bodky s obrysom sú originály.`,
         errLoad: '⚠ Sprity sa nenačítali (spusti cez server, nie file://).',
         errImg: '⚠ Tento súbor sa nedá načítať ako obrázok.',
-        errMax: '⚠ Maximálne 6 obrázkov.'
+        errMax: '⚠ Maximálne 12 obrázkov.'
     }
 };
 let LANG = new URLSearchParams(location.search).get('lang') || localStorage.getItem('lang') || 'en';
@@ -165,6 +199,10 @@ function applyLang() {
     document.querySelector('.hint').innerHTML = t.hint;
     document.getElementById('reset').textContent = t.reset;
     document.getElementById('tour').textContent = t.tour;
+    document.getElementById('sharp').textContent = t.sharp;
+    document.getElementById('resLabel').textContent = t.res;
+    document.getElementById('modeLabel').textContent = t.modeLabel;
+    document.getElementById('modeStatus').textContent = (statusKey ? t[statusKey] : '') + (typeof statusExtra === 'string' ? statusExtra : '');
     document.getElementById('upload').textContent = t.upload;
     document.getElementById('lang').textContent = t.toggle;
     syncPlay();
@@ -177,12 +215,25 @@ document.getElementById('lang').addEventListener('click', () => {
 });
 
 // ==================== AUTOENKODÉR od nuly (ploché Float32Array) ====================
-const IMG = 48, D = IMG * IMG * 3, LATL = 2;                 // LATL = index vrstvy, ktorej výstup je latent
-const SIZES = [D, 128, 32, 2, 32, 128, D];
+// Rozlíšenie je nastaviteľné za behu (IMG×IMG). Keďže ide o „pixel-vektorový" autoenkodér,
+// vstup aj výstup majú rozmer IMG²·3 — vyššie rozlíšenie = kvadraticky viac parametrov aj počtov.
+const LATL = 2;                                              // LATL = index vrstvy, ktorej výstup je latent
+const _qs = new URLSearchParams(location.search);
+const RES_OPTS = [48, 64, 96];
+let IMG = Math.max(16, (+_qs.get('res')) || 64);            // predvolené 64 (48 = rýchle, 96 = ostré ale pomalé)
+let D = IMG * IMG * 3, IMG3 = IMG * 3;
+let SIZES = [D, 128, 32, 2, 32, 128, D];
 // latent je LINEÁRNY + jemný ťah k stredu (LAMBDA): tanh v úzkom hrdle sa saturuje a učenie zamrzne
 const ACTN  = ['relu', 'relu', 'lin', 'relu', 'relu', 'sig'];
 const LAMBDA = 0.01, WARM = 200;
-const BS = Math.max(1, +(new URLSearchParams(location.search).get('bs')) || 8);
+// dávka sa zmenšuje s rozlíšením, aby BS·D (a teda cena jedného kroku ≈ plynulosť) ostala ~konštantná
+function pickBS() { return _qs.has('bs') ? Math.max(1, +_qs.get('bs')) : (IMG <= 48 ? 8 : IMG <= 64 ? 5 : 2); }
+let BS = pickBS();
+// Worker/GPU netrénujú na UI vlákne → nemusia obetovať dávku pre plynulosť snímkov
+function bsFor(m) { return m === 'cpu' ? pickBS() : (_qs.has('bs') ? Math.max(1, +_qs.get('bs')) : 8); }
+const SHARP = _qs.has('sharp') ? +_qs.get('sharp') : 0.7;   // váha gradientovej (ostrostnej) straty
+let sharpOn = true;
+let gpx = new Float32Array(D);                             // dL/dvýstup pred sigmoidom (MSE + ostrosť)
 let ZR = 1.15;                                               // polomer mapy v latente — adaptívny
 // šum aj ťah k stredu sa počas tréningu tlmia k 25 % — inak varianty jednej triedy
 // zostanú nalepené na jednom bode a dekóder kreslí len ich rozmazaný priemer
@@ -224,6 +275,32 @@ function dact(l, k) {
     if (ACTN[l] === 'relu') return Z[l][k] > 0 ? 1 : 0;
     return 1;   // lin
 }
+// Gradientová (ostrostná) strata: zhoduje priestorové gradienty (okraje) rekonštrukcie a cieľa.
+// Samotné MSE odmeňuje priemerovanie susedných možností → rozmazanie; toto tlačí na ostré prechody.
+function addSharpGrad(out, tgt) {
+    for (let y = 0; y < IMG; y++) {                          // horizontálne okraje
+        const row = y * IMG3;
+        for (let x = 0; x < IMG - 1; x++) {
+            const cur = row + x * 3;
+            for (let c = 0; c < 3; c++) {
+                const i = cur + c, n = i + 3;
+                const d = SHARP * ((out[n] - out[i]) - (tgt[n] - tgt[i]));
+                gpx[n] += d; gpx[i] -= d;
+            }
+        }
+    }
+    for (let y = 0; y < IMG - 1; y++) {                      // vertikálne okraje
+        const row = y * IMG3;
+        for (let x = 0; x < IMG; x++) {
+            const cur = row + x * 3;
+            for (let c = 0; c < 3; c++) {
+                const i = cur + c, n = i + IMG3;
+                const d = SHARP * ((out[n] - out[i]) - (tgt[n] - tgt[i]));
+                gpx[n] += d; gpx[i] -= d;
+            }
+        }
+    }
+}
 function trainStep(lr) {
     for (let l = 0; l < L; l++) { gW[l].fill(0); gB[l].fill(0); }
     let se = 0;
@@ -236,7 +313,9 @@ function trainStep(lr) {
             if (l === LATL) { latClean.set(A[LATL + 1]); const sg = noiseSigma(); for (let k = 0; k < 2; k++) A[LATL + 1][k] += randn() * sg; }
         }
         const out = A[L], dOut = DEL[L - 1];
-        for (let i = 0; i < D; i++) { const e = out[i] - x[i]; se += e * e; dOut[i] = e * out[i] * (1 - out[i]); }
+        for (let i = 0; i < D; i++) { const e = out[i] - x[i]; se += e * e; gpx[i] = e; }
+        if (sharpOn && SHARP > 0) addSharpGrad(out, x);
+        for (let i = 0; i < D; i++) dOut[i] = gpx[i] * out[i] * (1 - out[i]);
         for (let l = L - 1; l >= 0; l--) {
             const rows = SIZES[l + 1], cols = SIZES[l], w = W[l], prev = A[l], del = DEL[l], gWl = gW[l], gBl = gB[l];
             for (let i = 0; i < rows; i++) {
@@ -274,13 +353,424 @@ function trainStep(lr) {
     return se / (BS * D);
 }
 
+// ==================== VÝPOČTOVÝ BACKEND: CPU | Web Worker | WebGPU ====================
+// Snímková architektúra: vykresľovanie (encode/decode) beží VŽDY na hlavnom vlákne z globálnych
+// W/B. V režime CPU sa W/B trénujú priamo tu. V režime Worker/WebGPU sa trénuje inde (vlastná kópia
+// váh) a periodicky sa sem posiela „snímka" váh na vykreslenie. Rovnaký vykresľovací kód pre všetky režimy.
+function packWeights() {
+    let tot = 0; for (let l = 0; l < L; l++) tot += W[l].length; for (let l = 0; l < L; l++) tot += B[l].length;
+    const f = new Float32Array(tot); let o = 0;
+    for (let l = 0; l < L; l++) { f.set(W[l], o); o += W[l].length; }
+    for (let l = 0; l < L; l++) { f.set(B[l], o); o += B[l].length; }
+    return f;
+}
+function unpackWeights(f) {
+    let o = 0;
+    for (let l = 0; l < L; l++) { W[l].set(f.subarray(o, o + W[l].length)); o += W[l].length; }
+    for (let l = 0; l < L; l++) { B[l].set(f.subarray(o, o + B[l].length)); o += B[l].length; }
+}
+function packDataBuf() { const n = data.length, f = new Float32Array(n * D); for (let i = 0; i < n; i++) f.set(data[i].x, i * D); return { buf: f.buffer, n, dim: D }; }
+
+let mode = 'cpu', worker = null, gpu = null, statusKey = '';
+// Worker trénuje na vlastnej kópii siete (rovnaká matematika ako vyššie) a posiela snímky váh späť.
+const WORKER_SRC = `'use strict';
+let SIZES,IMG,D,IMG3,L,ACTN,LAMBDA=0.01,WARM=200;
+let W=[],B=[],mW=[],vW=[],mB=[],vB=[],gW=[],gB=[],A=[],Zb=[],DEL=[],tAdam=0,gpx=null;
+const latClean=new Float32Array(2);
+let flat=null,N=0,dim=0,lr=0.002,BS=5,SHARP=0.7,sharpOn=true,noise=0.03,budget=22,running=false;
+let steps=0,lastLoss=0,looping=false,lastPostT=0,postAcc=0;
+const TAU=Math.PI*2;
+function randn(){let u=0,v=0;while(!u)u=Math.random();while(!v)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(TAU*v);}
+function initNet(){W=[];B=[];mW=[];vW=[];mB=[];vB=[];gW=[];gB=[];A=[];Zb=[];DEL=[];tAdam=0;A.push(new Float32Array(SIZES[0]));
+ for(let l=0;l<L;l++){const rows=SIZES[l+1],cols=SIZES[l],w=new Float32Array(rows*cols);
+  if(ACTN[l]==='relu'){const s=Math.sqrt(2/cols);for(let i=0;i<w.length;i++)w[i]=randn()*s;}
+  else{const s=Math.sqrt(6/(cols+rows));for(let i=0;i<w.length;i++)w[i]=(Math.random()*2-1)*s;}
+  W.push(w);B.push(new Float32Array(rows));mW.push(new Float32Array(w.length));vW.push(new Float32Array(w.length));
+  mB.push(new Float32Array(rows));vB.push(new Float32Array(rows));gW.push(new Float32Array(w.length));gB.push(new Float32Array(rows));
+  A.push(new Float32Array(rows));Zb.push(new Float32Array(rows));DEL.push(new Float32Array(rows));}
+ gpx=new Float32Array(D);}
+function fwd(l){const rows=SIZES[l+1],cols=SIZES[l],w=W[l],b=B[l],prev=A[l],zz=Zb[l],out=A[l+1],kind=ACTN[l];
+ for(let i=0;i<rows;i++){let s=b[i];const off=i*cols;for(let j=0;j<cols;j++)s+=w[off+j]*prev[j];zz[i]=s;out[i]=kind==='relu'?(s>0?s:0):kind==='lin'?s:1/(1+Math.exp(-s));}}
+function dact(l,k){if(ACTN[l]==='relu')return Zb[l][k]>0?1:0;return 1;}
+function addSharp(out,tgt){
+ for(let y=0;y<IMG;y++){const row=y*IMG3;for(let x=0;x<IMG-1;x++){const cur=row+x*3;for(let c=0;c<3;c++){const i=cur+c,n=i+3;const d=SHARP*((out[n]-out[i])-(tgt[n]-tgt[i]));gpx[n]+=d;gpx[i]-=d;}}}
+ for(let y=0;y<IMG-1;y++){const row=y*IMG3;for(let x=0;x<IMG;x++){const cur=row+x*3;for(let c=0;c<3;c++){const i=cur+c,n=i+IMG3;const d=SHARP*((out[n]-out[i])-(tgt[n]-tgt[i]));gpx[n]+=d;gpx[i]-=d;}}}}
+function step(){for(let l=0;l<L;l++){gW[l].fill(0);gB[l].fill(0);}let se=0;
+ for(let b=0;b<BS;b++){const idx=(Math.random()*N)|0,x=flat.subarray(idx*dim,idx*dim+dim);A[0].set(x);
+  for(let l=0;l<L;l++){fwd(l);if(l===2){latClean.set(A[3]);for(let k=0;k<2;k++)A[3][k]+=randn()*noise;}}
+  const out=A[L],dOut=DEL[L-1];for(let i=0;i<D;i++){const e=out[i]-x[i];se+=e*e;gpx[i]=e;}
+  if(sharpOn&&SHARP>0)addSharp(out,x);for(let i=0;i<D;i++)dOut[i]=gpx[i]*out[i]*(1-out[i]);
+  for(let l=L-1;l>=0;l--){const rows=SIZES[l+1],cols=SIZES[l],w=W[l],prev=A[l],del=DEL[l],gWl=gW[l],gBl=gB[l];
+   for(let i=0;i<rows;i++){const di=del[i];if(di===0)continue;gBl[i]+=di;const off=i*cols;for(let j=0;j<cols;j++)gWl[off+j]+=di*prev[j];}
+   if(l>0){const nd=DEL[l-1];nd.fill(0);for(let i=0;i<rows;i++){const di=del[i];if(di===0)continue;const off=i*cols;for(let k=0;k<cols;k++)nd[k]+=w[off+k]*di;}
+    for(let k=0;k<cols;k++)nd[k]*=dact(l-1,k);if(l-1===2)for(let k=0;k<cols;k++)nd[k]+=LAMBDA*Zb[2][k];}}}
+ tAdam++;const elr=lr*(tAdam<WARM?tAdam/WARM:1),b1=0.9,b2=0.999,eps=1e-8,c1=1-Math.pow(b1,tAdam),c2=1-Math.pow(b2,tAdam),invB=1/BS;
+ for(let l=0;l<L;l++){const w=W[l],g=gW[l],m=mW[l],v=vW[l];
+  for(let i=0;i<w.length;i++){const gg=g[i]*invB,mm=m[i]=b1*m[i]+(1-b1)*gg,vv=v[i]=b2*v[i]+(1-b2)*gg*gg;w[i]-=elr*(mm/c1)/(Math.sqrt(vv/c2)+eps);}
+  const bb=B[l],gb=gB[l],mb=mB[l],vb=vB[l];
+  for(let i=0;i<bb.length;i++){const gg=gb[i]*invB,mm=mb[i]=b1*mb[i]+(1-b1)*gg,vv=vb[i]=b2*vb[i]+(1-b2)*gg*gg;bb[i]-=elr*(mm/c1)/(Math.sqrt(vv/c2)+eps);}}
+ return se/(BS*D);}
+function packW(){let tot=0;for(let l=0;l<L;l++)tot+=W[l].length;for(let l=0;l<L;l++)tot+=B[l].length;const f=new Float32Array(tot);let o=0;
+ for(let l=0;l<L;l++){f.set(W[l],o);o+=W[l].length;}for(let l=0;l<L;l++){f.set(B[l],o);o+=B[l].length;}return f;}
+function loadW(f){let o=0;for(let l=0;l<L;l++){W[l].set(f.subarray(o,o+W[l].length));o+=W[l].length;}for(let l=0;l<L;l++){B[l].set(f.subarray(o,o+B[l].length));o+=B[l].length;}}
+const chan=new MessageChannel();chan.port1.onmessage=function(){tick();};
+function sched(){chan.port2.postMessage(0);}   // bez 4ms clampu setTimeout → takmer plný výkon
+function tick(){looping=false;
+ if(running&&flat&&N){const t0=performance.now();do{lastLoss=step();steps++;postAcc++;}while(performance.now()-t0<budget);
+  const now=performance.now();if(now-lastPostT>150){const w=packW();self.postMessage({type:'snap',w:w.buffer,loss:lastLoss,stepInc:postAcc},[w.buffer]);postAcc=0;lastPostT=now;}}
+ if(running){looping=true;sched();}}
+function ensureLoop(){if(!looping&&running){looping=true;sched();}}
+self.onmessage=function(e){const m=e.data;
+ if(m.type==='init'){SIZES=m.sizes;IMG=m.IMG;D=m.D;IMG3=m.IMG3;L=SIZES.length-1;ACTN=m.ACTN;LAMBDA=m.LAMBDA;WARM=m.WARM;initNet();steps=0;}
+ else if(m.type==='weights'){loadW(new Float32Array(m.w));}
+ else if(m.type==='data'){flat=new Float32Array(m.buf);N=m.n;dim=m.dim;}
+ else if(m.type==='config'){lr=m.lr;BS=m.BS;SHARP=m.SHARP;sharpOn=m.sharpOn;noise=m.noise;budget=m.budget;}
+ else if(m.type==='reset'){if(m.sizes){SIZES=m.sizes;IMG=m.IMG;D=m.D;IMG3=m.IMG3;L=SIZES.length-1;}initNet();steps=0;}
+ else if(m.type==='run'){running=m.on;lastPostT=performance.now();ensureLoop();}};`;
+let workerURL = null;
+function ensureWorker() {
+    if (worker) return;
+    workerURL = workerURL || URL.createObjectURL(new Blob([WORKER_SRC], { type: 'text/javascript' }));
+    worker = new Worker(workerURL);
+    worker.onmessage = e => {
+        const m = e.data;
+        if (m.type === 'snap') { unpackWeights(new Float32Array(m.w)); steps += m.stepInc; if (m.loss === m.loss) { lastLoss = m.loss; pushLoss(lastLoss); } }
+    };
+}
+function sendDataToBackend() {
+    if (mode === 'worker' && worker) { const d = packDataBuf(); worker.postMessage({ type: 'data', buf: d.buf, n: d.n, dim: d.dim }, [d.buf]); }
+    if (mode === 'webgpu' && gpu) gpu.setData(data);
+}
+function sendCfgToBackend() {
+    const cfg = { lr, BS: bsFor(mode), SHARP, sharpOn, noise: noiseSigma(), budget };
+    if (mode === 'worker' && worker) worker.postMessage({ type: 'config', ...cfg });
+    if (mode === 'webgpu' && gpu) gpu.setConfig(cfg);
+}
+function backendReset() {   // hlavná sieť už bola re-inicializovaná; posuň stav do backendu
+    if (mode === 'worker' && worker) {
+        worker.postMessage({ type: 'reset', sizes: SIZES, IMG, D, IMG3 });
+        const w = packWeights(); worker.postMessage({ type: 'weights', w: w.buffer }, [w.buffer]);
+        sendDataToBackend(); sendCfgToBackend(); worker.postMessage({ type: 'run', on: running });
+    }
+    if (mode === 'webgpu' && gpu) gpu.reset(SIZES, IMG, packWeights(), data, running);
+}
+function backendRun(on) { if (mode === 'worker' && worker) worker.postMessage({ type: 'run', on }); if (mode === 'webgpu' && gpu) gpu.setRunning(on); }
+function reflectMode() { document.querySelectorAll('#modeBtns button').forEach(b => b.classList.toggle('active', b.dataset.mode === mode)); }
+let statusExtra = '';
+function setStatusKey(k, extra) { statusKey = k; statusExtra = extra || ''; document.getElementById('modeStatus').textContent = (k ? T()[k] : '') + statusExtra; }
+function setMode(m) {
+    if (m === mode) return;
+    backendRun(false);
+    const prev = mode;
+    if (m === 'webgpu') { startWebGPU(prev); return; }   // async; nastaví mode pri úspechu
+    mode = m;
+    if (m === 'worker') {
+        ensureWorker();
+        worker.postMessage({ type: 'init', sizes: SIZES, IMG, D, IMG3, ACTN, LAMBDA, WARM });
+        const w = packWeights(); worker.postMessage({ type: 'weights', w: w.buffer }, [w.buffer]);
+        sendDataToBackend(); sendCfgToBackend(); worker.postMessage({ type: 'run', on: running });
+        setStatusKey('workerOn');
+    } else setStatusKey('');   // cpu
+    reflectMode();
+}
+// ---- WebGPU tréner: rovnaká sieť, forward/backward/Adam v compute shaderoch (WGSL) ----
+// Nedá sa u mňa otestovať (sandbox nemá GPU), preto: forward self-test proti CPU + živá kontrola
+// klesania straty; pri akejkoľvek chybe/nezhode/NaN sa bezpečne vráti na CPU. Snímky váh sa čítajú
+// späť na hlavné vlákno na vykresľovanie (rovnako ako Worker).
+const WGSL = {
+loadin: `struct Li{D:u32,bs:u32,p0:u32,p1:u32};
+@group(0)@binding(0)var<uniform>li:Li;
+@group(0)@binding(1)var<storage,read>data:array<f32>;
+@group(0)@binding(2)var<storage,read>samp:array<u32>;
+@group(0)@binding(3)var<storage,read_write>Ain:array<f32>;
+@compute @workgroup_size(64) fn main(@builtin(global_invocation_id)g:vec3<u32>){
+ let idx=g.x; let tot=li.D*li.bs; if(idx>=tot){return;}
+ let p=idx/li.bs; let b=idx%li.bs; Ain[idx]=data[samp[b]*li.D+p]; }`,
+fwd: `struct Dm{rows:u32,cols:u32,bs:u32,kind:u32,isLat:u32,p0:u32,p1:u32,p2:u32};
+@group(0)@binding(0)var<uniform>dm:Dm;
+@group(0)@binding(1)var<storage,read>Wl:array<f32>;
+@group(0)@binding(2)var<storage,read>Bl:array<f32>;
+@group(0)@binding(3)var<storage,read>Ain:array<f32>;
+@group(0)@binding(4)var<storage,read_write>Zout:array<f32>;
+@group(0)@binding(5)var<storage,read_write>Aout:array<f32>;
+@group(0)@binding(6)var<storage,read>noise:array<f32>;
+@compute @workgroup_size(64) fn main(@builtin(global_invocation_id)g:vec3<u32>){
+ let idx=g.x; let tot=dm.rows*dm.bs; if(idx>=tot){return;}
+ let i=idx/dm.bs; let b=idx%dm.bs; var s=Bl[i];
+ for(var j:u32=0u;j<dm.cols;j=j+1u){ s=s+Wl[i*dm.cols+j]*Ain[j*dm.bs+b]; }
+ Zout[idx]=s; var a:f32;
+ if(dm.kind==0u){a=select(0.0,s,s>0.0);}else if(dm.kind==1u){a=s;}else{a=1.0/(1.0+exp(-s));}
+ if(dm.isLat==1u){a=a+noise[i*dm.bs+b];}
+ Aout[idx]=a; }`,
+outd: `struct Od{D:u32,bs:u32,IMG:u32,IMG3:u32,sharpOn:u32,p0:u32,p1:u32,p2:u32};
+struct St{elr:f32,c1:f32,c2:f32,invB:f32,sharp:f32,lambda:f32,b1:f32,b2:f32};
+@group(0)@binding(0)var<uniform>od:Od;
+@group(0)@binding(1)var<uniform>st:St;
+@group(0)@binding(2)var<storage,read>Aout:array<f32>;
+@group(0)@binding(3)var<storage,read>data:array<f32>;
+@group(0)@binding(4)var<storage,read>samp:array<u32>;
+@group(0)@binding(5)var<storage,read_write>DEL:array<f32>;
+@compute @workgroup_size(64) fn main(@builtin(global_invocation_id)g:vec3<u32>){
+ let idx=g.x; let tot=od.D*od.bs; if(idx>=tot){return;}
+ let p=idx/od.bs; let b=idx%od.bs; let base=samp[b]*od.D;
+ let out=Aout[p*od.bs+b]; let tgt=data[base+p]; var gg=out-tgt;
+ if(od.sharpOn==1u){
+  let pix=p/3u; let x=pix%od.IMG; let y=pix/od.IMG; var ds:f32=0.0;
+  if(x<od.IMG-1u){ let dO=Aout[(p+3u)*od.bs+b]-out; let dT=data[base+p+3u]-tgt; ds=ds-(dO-dT); }
+  if(x>0u){ let dO=out-Aout[(p-3u)*od.bs+b]; let dT=tgt-data[base+p-3u]; ds=ds+(dO-dT); }
+  if(y<od.IMG-1u){ let dO=Aout[(p+od.IMG3)*od.bs+b]-out; let dT=data[base+p+od.IMG3]-tgt; ds=ds-(dO-dT); }
+  if(y>0u){ let dO=out-Aout[(p-od.IMG3)*od.bs+b]; let dT=tgt-data[base+p-od.IMG3]; ds=ds+(dO-dT); }
+  gg=gg+st.sharp*ds; }
+ DEL[idx]=gg*out*(1.0-out); }`,
+gw: `struct Gd{rows:u32,cols:u32,bs:u32,p0:u32};
+@group(0)@binding(0)var<uniform>gd:Gd;
+@group(0)@binding(1)var<storage,read>DEL:array<f32>;
+@group(0)@binding(2)var<storage,read>Aprev:array<f32>;
+@group(0)@binding(3)var<storage,read_write>gW:array<f32>;
+@compute @workgroup_size(64) fn main(@builtin(global_invocation_id)g:vec3<u32>){
+ let e=g.x; if(e>=gd.rows*gd.cols){return;} let i=e/gd.cols; let j=e%gd.cols; var s=0.0;
+ for(var b:u32=0u;b<gd.bs;b=b+1u){ s=s+DEL[i*gd.bs+b]*Aprev[j*gd.bs+b]; } gW[e]=s; }`,
+gb: `struct Gb{rows:u32,bs:u32,p0:u32,p1:u32};
+@group(0)@binding(0)var<uniform>gb:Gb;
+@group(0)@binding(1)var<storage,read>DEL:array<f32>;
+@group(0)@binding(2)var<storage,read_write>gB:array<f32>;
+@compute @workgroup_size(64) fn main(@builtin(global_invocation_id)g:vec3<u32>){
+ let i=g.x; if(i>=gb.rows){return;} var s=0.0; for(var b:u32=0u;b<gb.bs;b=b+1u){ s=s+DEL[i*gb.bs+b]; } gB[i]=s; }`,
+bd: `struct Bd{rows:u32,cols:u32,bs:u32,kindPrev:u32,isLatPrev:u32,p0:u32,p1:u32,p2:u32};
+struct St{elr:f32,c1:f32,c2:f32,invB:f32,sharp:f32,lambda:f32,b1:f32,b2:f32};
+@group(0)@binding(0)var<uniform>bd:Bd;
+@group(0)@binding(1)var<uniform>st:St;
+@group(0)@binding(2)var<storage,read>Wl:array<f32>;
+@group(0)@binding(3)var<storage,read>DELnext:array<f32>;
+@group(0)@binding(4)var<storage,read>Zprev:array<f32>;
+@group(0)@binding(5)var<storage,read_write>DELprev:array<f32>;
+@compute @workgroup_size(64) fn main(@builtin(global_invocation_id)g:vec3<u32>){
+ let idx=g.x; let tot=bd.cols*bd.bs; if(idx>=tot){return;}
+ let k=idx/bd.bs; let b=idx%bd.bs; var s=0.0;
+ for(var i:u32=0u;i<bd.rows;i=i+1u){ s=s+Wl[i*bd.cols+k]*DELnext[i*bd.bs+b]; }
+ let z=Zprev[k*bd.bs+b];
+ if(bd.kindPrev==0u){ s=s*select(0.0,1.0,z>0.0); }
+ if(bd.isLatPrev==1u){ s=s+st.lambda*z; }
+ DELprev[idx]=s; }`,
+adam: `struct Ad{n:u32,p0:u32,p1:u32,p2:u32};
+struct St{elr:f32,c1:f32,c2:f32,invB:f32,sharp:f32,lambda:f32,b1:f32,b2:f32};
+@group(0)@binding(0)var<uniform>ad:Ad;
+@group(0)@binding(1)var<uniform>st:St;
+@group(0)@binding(2)var<storage,read>gP:array<f32>;
+@group(0)@binding(3)var<storage,read_write>P:array<f32>;
+@group(0)@binding(4)var<storage,read_write>M:array<f32>;
+@group(0)@binding(5)var<storage,read_write>V:array<f32>;
+@compute @workgroup_size(64) fn main(@builtin(global_invocation_id)g:vec3<u32>){
+ let e=g.x; if(e>=ad.n){return;} let gg=gP[e]*st.invB;
+ let mm=st.b1*M[e]+(1.0-st.b1)*gg; M[e]=mm; let vv=st.b2*V[e]+(1.0-st.b2)*gg*gg; V[e]=vv;
+ P[e]=P[e]-st.elr*(mm/st.c1)/(sqrt(vv/st.c2)+1e-8); }`
+};
+
+async function makeGPU(device) {
+    const G = { device, running: false, tAdam: 0, cfg: { lr: 0.002, BS: 5, SHARP: 0.7, sharpOn: true, noise: 0.03 }, dataN: 0, mapping: false, lastRead: 0 };
+    const buf = (sz, usage) => device.createBuffer({ size: Math.max(4, sz * 4), usage });
+    const ST = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+    const UNI = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
+    const modules = {}; for (const k in WGSL) modules[k] = device.createShaderModule({ code: WGSL[k] });
+    const pipes = {}; for (const k in modules) pipes[k] = device.createComputePipeline({ layout: 'auto', compute: { module: modules[k], entryPoint: 'main' } });
+    const uni = (arr) => { const b = buf(arr.length, UNI); device.queue.writeBuffer(b, 0, arr.buffer.slice(0)); return b; };
+    let sizes, IMG, D, IMG3, L, BS, Wb, Bb, mWb, vWb, mBb, vBb, gWb, gBb, Ab, Zb, DELb, dataBuf, sampBuf, noiseBuf, stUBO, dimF, dimO, dimGW, dimGB, dimBD, dimAdW, dimAdB, dimLoad, groups, staging, totalParams;
+    const ACT_KIND = { relu: 0, lin: 1, sig: 2 };
+
+    function build(sz, im, weightsFlat) {
+        sizes = sz; IMG = im; D = sizes[0]; IMG3 = IMG * 3; L = sizes.length - 1; BS = G.cfg.BS;
+        Wb = []; Bb = []; mWb = []; vWb = []; mBb = []; vBb = []; gWb = []; gBb = []; Ab = []; Zb = []; DELb = [];
+        Ab.push(buf(sizes[0] * BS, ST));
+        totalParams = 0;
+        for (let l = 0; l < L; l++) {
+            const rows = sizes[l + 1], cols = sizes[l];
+            Wb.push(buf(rows * cols, ST)); Bb.push(buf(rows, ST));
+            mWb.push(buf(rows * cols, ST)); vWb.push(buf(rows * cols, ST)); mBb.push(buf(rows, ST)); vBb.push(buf(rows, ST));
+            gWb.push(buf(rows * cols, ST)); gBb.push(buf(rows, ST));
+            Ab.push(buf(rows * BS, ST)); Zb.push(buf(rows * BS, ST)); DELb.push(buf(rows * BS, ST));
+            totalParams += rows * cols + rows;
+        }
+        // zero moments
+        for (let l = 0; l < L; l++) { const rc = sizes[l + 1] * sizes[l], r = sizes[l + 1];
+            device.queue.writeBuffer(mWb[l], 0, new Float32Array(rc)); device.queue.writeBuffer(vWb[l], 0, new Float32Array(rc));
+            device.queue.writeBuffer(mBb[l], 0, new Float32Array(r)); device.queue.writeBuffer(vBb[l], 0, new Float32Array(r)); }
+        loadWeights(weightsFlat);
+        sampBuf = buf(BS, ST); noiseBuf = buf(2 * BS, ST);
+        stUBO = buf(8, UNI);
+        // static uniforms
+        dimF = []; dimO = null; dimGW = []; dimGB = []; dimBD = []; dimAdW = []; dimAdB = [];
+        for (let l = 0; l < L; l++) {
+            const rows = sizes[l + 1], cols = sizes[l], isLat = (l === LATL) ? 1 : 0, kind = ACT_KIND[ACTN[l]];
+            dimF.push(uni(new Uint32Array([rows, cols, BS, kind, isLat, 0, 0, 0])));
+            dimGW.push(uni(new Uint32Array([rows, cols, BS, 0])));
+            dimGB.push(uni(new Uint32Array([rows, BS, 0, 0])));
+            dimAdW.push(uni(new Uint32Array([rows * cols, 0, 0, 0])));
+            dimAdB.push(uni(new Uint32Array([rows, 0, 0, 0])));
+            if (l > 0) { const kindPrev = ACT_KIND[ACTN[l - 1]], isLatPrev = (l - 1 === LATL) ? 1 : 0;
+                dimBD.push(uni(new Uint32Array([rows, cols, BS, kindPrev, isLatPrev, 0, 0, 0]))); }
+            else dimBD.push(null);
+        }
+        dimO = uni(new Uint32Array([D, BS, IMG, IMG3, G.cfg.sharpOn ? 1 : 0, 0, 0, 0]));
+        dimLoad = uni(new Uint32Array([D, BS, 0, 0]));
+        staging = device.createBuffer({ size: totalParams * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+        buildGroups();
+        G.tAdam = 0;
+    }
+    function loadWeights(flat) {
+        let o = 0;
+        for (let l = 0; l < L; l++) { const n = sizes[l + 1] * sizes[l]; device.queue.writeBuffer(Wb[l], 0, flat.subarray(o, o + n).slice().buffer); o += n; }
+        for (let l = 0; l < L; l++) { const n = sizes[l + 1]; device.queue.writeBuffer(Bb[l], 0, flat.subarray(o, o + n).slice().buffer); o += n; }
+    }
+    const bg = (pipe, entries) => device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: entries.map((r, i) => ({ binding: i, resource: { buffer: r } })) });
+    function buildGroups() {
+        groups = { fwd: [], gw: [], gb: [], bd: [], adW: [], adB: [] };
+        for (let l = 0; l < L; l++) {
+            groups.fwd.push(bg(pipes.fwd, [dimF[l], Wb[l], Bb[l], Ab[l], Zb[l], Ab[l + 1], noiseBuf]));
+            groups.gw.push(bg(pipes.gw, [dimGW[l], DELb[l], Ab[l], gWb[l]]));
+            groups.gb.push(bg(pipes.gb, [dimGB[l], DELb[l], gBb[l]]));
+            groups.bd.push(l > 0 ? bg(pipes.bd, [dimBD[l], stUBO, Wb[l], DELb[l], Zb[l - 1], DELb[l - 1]]) : null);
+            groups.adW.push(bg(pipes.adam, [dimAdW[l], stUBO, gWb[l], Wb[l], mWb[l], vWb[l]]));
+            groups.adB.push(bg(pipes.adam, [dimAdB[l], stUBO, gBb[l], Bb[l], mBb[l], vBb[l]]));
+        }
+        groups.outd = bg(pipes.outd, [dimO, stUBO, Ab[L], dataBuf || (dataBuf = buf(D, ST)), sampBuf, DELb[L - 1]]);
+        groups.loadin = bg(pipes.loadin, [dimLoad, dataBuf, sampBuf, Ab[0]]);
+    }
+    function setData(dataArr) {
+        G.dataN = dataArr.length; const flat = new Float32Array(dataArr.length * D);
+        for (let i = 0; i < dataArr.length; i++) flat.set(dataArr[i].x, i * D);
+        dataBuf = buf(dataArr.length * D, ST); device.queue.writeBuffer(dataBuf, 0, flat.buffer);
+        if (groups) { groups.outd = bg(pipes.outd, [dimO, stUBO, Ab[L], dataBuf, sampBuf, DELb[L - 1]]); groups.loadin = bg(pipes.loadin, [dimLoad, dataBuf, sampBuf, Ab[0]]); }
+    }
+    function writeStep() {
+        G.tAdam++;
+        const b1 = 0.9, b2 = 0.999, warm = G.tAdam < WARM ? G.tAdam / WARM : 1;
+        const c1 = 1 - Math.pow(b1, G.tAdam), c2 = 1 - Math.pow(b2, G.tAdam);
+        device.queue.writeBuffer(stUBO, 0, new Float32Array([G.cfg.lr * warm, c1, c2, 1 / BS, G.cfg.SHARP, LAMBDA, b1, b2]).buffer);
+        const idx = new Uint32Array(BS), noi = new Float32Array(2 * BS);
+        for (let b = 0; b < BS; b++) idx[b] = (Math.random() * G.dataN) | 0;
+        for (let k = 0; k < 2 * BS; k++) noi[k] = gRandn() * G.cfg.noise;
+        device.queue.writeBuffer(sampBuf, 0, idx.buffer); device.queue.writeBuffer(noiseBuf, 0, noi.buffer);
+    }
+    const wg = n => Math.ceil(n / 64);
+    function encodeStep(enc) {
+        const p = enc.beginComputePass();
+        p.setPipeline(pipes.loadin); p.setBindGroup(0, groups.loadin); p.dispatchWorkgroups(wg(D * BS));   // vstup dávky → A[0]
+        for (let l = 0; l < L; l++) { p.setPipeline(pipes.fwd); p.setBindGroup(0, groups.fwd[l]); p.dispatchWorkgroups(wg(sizes[l + 1] * BS)); }
+        p.setPipeline(pipes.outd); p.setBindGroup(0, groups.outd); p.dispatchWorkgroups(wg(D * BS));
+        for (let l = L - 1; l >= 0; l--) {
+            p.setPipeline(pipes.gw); p.setBindGroup(0, groups.gw[l]); p.dispatchWorkgroups(wg(sizes[l + 1] * sizes[l]));
+            p.setPipeline(pipes.gb); p.setBindGroup(0, groups.gb[l]); p.dispatchWorkgroups(wg(sizes[l + 1]));
+            if (l > 0) { p.setPipeline(pipes.bd); p.setBindGroup(0, groups.bd[l]); p.dispatchWorkgroups(wg(sizes[l] * BS)); }
+        }
+        for (let l = 0; l < L; l++) {
+            p.setPipeline(pipes.adam); p.setBindGroup(0, groups.adW[l]); p.dispatchWorkgroups(wg(sizes[l + 1] * sizes[l]));
+            p.setPipeline(pipes.adam); p.setBindGroup(0, groups.adB[l]); p.dispatchWorkgroups(wg(sizes[l + 1]));
+        }
+        p.end();
+    }
+    function pump() {
+        if (!G.running || !G.dataN || !groups || G.mapping) return;   // nezahlcuj frontu kým beží čítanie váh (inak mapAsync hladuje)
+        const K = 4;
+        for (let s = 0; s < K; s++) { writeStep(); const enc = device.createCommandEncoder(); encodeStep(enc); device.queue.submit([enc.finish()]); }
+        steps += K;
+        readbackMaybe();
+    }
+    async function readbackMaybe() {
+        const now = performance.now();
+        if (G.mapping || now - G.lastRead < 300) return;   // snímka váh na vykreslenie ~3×/s stačí
+        G.mapping = true; G.lastRead = now;
+        try {
+            const enc = device.createCommandEncoder(); let o = 0;
+            for (let l = 0; l < L; l++) { const n = sizes[l + 1] * sizes[l] * 4; enc.copyBufferToBuffer(Wb[l], 0, staging, o, n); o += n; }
+            for (let l = 0; l < L; l++) { const n = sizes[l + 1] * 4; enc.copyBufferToBuffer(Bb[l], 0, staging, o, n); o += n; }
+            device.queue.submit([enc.finish()]);
+            await staging.mapAsync(GPUMapMode.READ);
+            const flat = new Float32Array(staging.getMappedRange().slice(0)); staging.unmap();
+            unpackWeights(flat);
+            // odhad straty z snímky (priemer cez viac vzoriek, bez šumu — stabilné číslo)
+            if (data.length) { let se = 0; const K = Math.min(8, data.length); for (let s = 0; s < K; s++) { const x = data[(Math.random() * data.length) | 0].x; const o2 = decode(encode(x)); for (let i = 0; i < D; i++) { const e = o2[i] - x[i]; se += e * e; } } lastLoss = se / (K * D); pushLoss(lastLoss); }
+        } catch (e) { /* ignoruj jednotlivé zlyhanie čítania */ } finally { G.mapping = false; }
+    }
+    async function forwardReadOutput(sampleIdx) {   // pre self-test: forward-only, prečítaj A[L] lane 0
+        device.queue.writeBuffer(sampBuf, 0, new Uint32Array([sampleIdx, 0, 0, 0, 0, 0, 0, 0].slice(0, BS)).buffer);
+        device.queue.writeBuffer(noiseBuf, 0, new Float32Array(2 * BS).buffer);
+        // nastav vstup A[0] priamo z dát
+        const x = data[sampleIdx].x, inFlat = new Float32Array(D * BS);
+        for (let b = 0; b < BS; b++) for (let i = 0; i < D; i++) inFlat[i * BS + b] = x[i];
+        device.queue.writeBuffer(Ab[0], 0, inFlat.buffer);
+        const enc = device.createCommandEncoder(); const p = enc.beginComputePass();
+        for (let l = 0; l < L; l++) { p.setPipeline(pipes.fwd); p.setBindGroup(0, groups.fwd[l]); p.dispatchWorkgroups(wg(sizes[l + 1] * BS)); }
+        p.end();
+        const rd = device.createBuffer({ size: D * BS * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+        enc.copyBufferToBuffer(Ab[L], 0, rd, 0, D * BS * 4);
+        device.queue.submit([enc.finish()]);
+        await rd.mapAsync(GPUMapMode.READ);
+        const arr = new Float32Array(rd.getMappedRange().slice(0)); rd.unmap(); rd.destroy();
+        const out = new Float32Array(D); for (let i = 0; i < D; i++) out[i] = arr[i * BS + 0];
+        return out;
+    }
+
+    G.reset = (sz, im, weightsFlat, dataArr, run) => { build(sz, im, weightsFlat); setData(dataArr); G.running = run; };
+    G.setData = setData;
+    G.setConfig = c => { const bsChanged = c.BS !== G.cfg.BS; G.cfg = { ...G.cfg, ...c }; if (dimO) device.queue.writeBuffer(dimO, 0, new Uint32Array([D, BS, IMG, IMG3, G.cfg.sharpOn ? 1 : 0, 0, 0, 0]).buffer); return bsChanged; };
+    G.setRunning = r => { G.running = r; };
+    G.pump = pump;
+    G.forwardReadOutput = forwardReadOutput;
+    return G;
+}
+function gRandn() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+
+async function startWebGPU(prev) {
+    setStatusKey('gpuChecking');
+    if (!navigator.gpu) { setStatusKey('gpuNo'); mode = prev; reflectMode(); return; }
+    try {
+        let adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+        if (!adapter) adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) adapter = await navigator.gpu.requestAdapter({ forceFallbackAdapter: true });
+        if (!adapter) throw new Error('no adapter');
+        const device = await adapter.requestDevice();
+        device.addEventListener && device.addEventListener('uncapturederror', () => {});
+        gpu = await makeGPU(device);
+        gpu.setConfig({ lr, BS: bsFor('webgpu'), SHARP, sharpOn, noise: noiseSigma() });
+        gpu.reset(SIZES, IMG, packWeights(), data, false);
+        // ---- forward self-test proti CPU ----
+        // Tolerancie musia rátať s realitou float32 na skutočných GPU: FMA a iné poradie sčítania
+        // cez ~12k členov prvej vrstvy legitímne posunú výstup o ~0.01–0.05. Chybný kernel dáva
+        // rádovo viac (a chytí ho aj živá kontrola divergencie nižšie).
+        const gout = await gpu.forwardReadOutput(0);
+        const cout = decode(encode(data[0].x));
+        let sum = 0, maxd = 0; for (let i = 0; i < D; i++) { const dd = Math.abs(gout[i] - cout[i]); sum += dd; if (dd > maxd) maxd = dd; }
+        const meand = sum / D, allZero = gout.every(v => v === 0), nan = gout.some(v => v !== v);
+        if (nan || allZero || meand > 0.08 || maxd > 0.5) throw new Error('mean=' + meand.toFixed(3) + ' max=' + maxd.toFixed(3) + (nan ? ' NaN' : '') + (allZero ? ' zero' : ''));
+        // prijaté: prepni na GPU
+        mode = 'webgpu'; gpu.setRunning(running); reflectMode(); setStatusKey('gpuOn');
+        // ---- živá kontrola: vyhladená strata nesmie divergovať/NaN, inak fallback ----
+        const s0 = smoothL || lastLoss || 1;
+        setTimeout(() => { if (mode === 'webgpu') { const cur = smoothL === null ? lastLoss : smoothL; if (cur !== cur || cur > s0 * 1.8) fallbackGPU('gpuFail'); } }, 4500);
+    } catch (e) {
+        console.warn('WebGPU init/self-test failed:', e);
+        if (gpu) { try { gpu.setRunning(false); } catch (_) {} gpu = null; }
+        setStatusKey('gpuFail', ' [' + String(e && e.message || e).slice(0, 70) + ']');
+        mode = prev === 'webgpu' ? 'cpu' : prev; reflectMode(); backendRun(running);
+    }
+}
+function fallbackGPU(key) {
+    if (gpu) { try { gpu.setRunning(false); } catch (_) {} gpu = null; }
+    mode = 'cpu'; reflectMode(); setStatusKey(key);
+}
+
 // ==================== DÁTA: sprity + augmentácie ====================
 const SPRITES = [
-    { src: 'sprites/klee.png',    color: '#ff6a6a' },
-    { src: 'sprites/cirno.png',   color: '#6ab8ff' },
-    { src: 'sprites/flandre.png', color: '#ffd75a' },
+    { src: 'sprites/klee.png',      color: '#ff6a6a' },
+    { src: 'sprites/cirno.png',     color: '#6ab8ff' },
+    { src: 'sprites/flandre.png',   color: '#ffd75a' },
+    { src: 'sprites/konata.png',    color: '#7effc0' },
+    { src: 'sprites/megumin.png',   color: '#ff5c8a' },
+    { src: 'sprites/sigewinne.png', color: '#c0a0ff' },
+    { src: 'sprites/reimu.png',     color: '#ff9d4d' },
+    { src: 'sprites/kanna.png',     color: '#9dff5a' },
 ];
-const EXTRA_COLORS = ['#7effc0', '#ff9de0', '#c0a0ff'];
+const EXTRA_COLORS = ['#ff9de0', '#5ad9ff', '#ffe08a'];
 const AUG_PER = 15;
 let classes = [], data = [];      // data: {x: Float32Array(D), cls, orig}
 const acan = document.createElement('canvas'); acan.width = IMG; acan.height = IMG;
@@ -312,6 +802,7 @@ function addClass(img, color) {
     tc.style.borderColor = color;
     document.getElementById('thumbs').appendChild(tc);
     document.getElementById('epochs').textContent = '0';
+    if (mode !== 'cpu') sendDataToBackend();                 // aktívny backend potrebuje novú dátovú sadu
 }
 
 // ==================== VIZUALIZÁCIA ====================
@@ -320,7 +811,7 @@ const outCv = document.getElementById('out'), octx = outCv.getContext('2d');
 const chartCv = document.getElementById('chart'), cctx = chartCv.getContext('2d');
 const MS = 360;                                               // rozsah mapy v latente: [-ZR, ZR], ZR je adaptívne
 const z2px = z => (z + ZR) / (2 * ZR) * MS, px2z = p => p / MS * 2 * ZR - ZR;
-const outImg = new ImageData(IMG, IMG);
+let outImg = new ImageData(IMG, IMG);
 const otmp = document.createElement('canvas'); otmp.width = IMG; otmp.height = IMG;
 const otmpCtx = otmp.getContext('2d');
 const mosaic = document.createElement('canvas'); mosaic.width = MS; mosaic.height = MS;
@@ -418,11 +909,11 @@ function drawChart() {
 
 // ==================== STAV + SLUČKA ====================
 let running = true, lr = 0.002, budget = 22, steps = 0, lastLoss = 0;
-let stepAcc = 0, spsT = performance.now(), sps = 0;
+let spsN = 0, spsT = performance.now(), sps = 0, lastCfgSync = 0;
 function countParams() { let p = 0; for (let l = 0; l < L; l++) p += W[l].length + B[l].length; return p; }
 function updateStats() {
     document.getElementById('epoch').textContent = steps.toLocaleString(T().locale);
-    document.getElementById('epochs').textContent = data.length ? Math.floor(steps * BS / data.length).toLocaleString(T().locale) : '0';
+    document.getElementById('epochs').textContent = data.length ? Math.floor(steps * bsFor(mode) / data.length).toLocaleString(T().locale) : '0';
     const sl = smoothL === null ? lastLoss : smoothL;
     document.getElementById('loss').textContent = steps ? sl.toFixed(4) : '—';
     document.getElementById('psnr').textContent = steps ? (10 * Math.log10(1 / Math.max(1e-6, sl))).toFixed(1) + ' dB' : '—';
@@ -430,17 +921,23 @@ function updateStats() {
 }
 function loop() {
     if (data.length) {
-        if (running) {
+        if (running && mode === 'cpu') {
             const t0 = performance.now();
-            do { lastLoss = trainStep(lr); steps++; stepAcc++; } while (performance.now() - t0 < budget);
+            do { lastLoss = trainStep(lr); steps++; } while (performance.now() - t0 < budget);
             pushLoss(lastLoss);
+        } else if (running && mode === 'webgpu' && gpu) {
+            gpu.pump();                                       // GPU sa hýbe; worker sa točí sám
         }
         const now = performance.now();
-        if (now - spsT > 500) { sps = stepAcc / ((now - spsT) / 1000); stepAcc = 0; spsT = now; }
+        if (now - spsT > 500) { sps = (steps - spsN) / ((now - spsT) / 1000); spsN = steps; spsT = now; }
+        if (mode !== 'cpu' && now - lastCfgSync > 2000) { lastCfgSync = now; sendCfgToBackend(); }   // šum sleduje rastúce ZR
         tickTour();
-        updateDots(running ? 2 : 6);
+        // dekódy mozaiky/bodiek za snímok — pri vyššom rozlíšení menej, aby ťahanie ostalo plynulé
+        // (drawOutput, spätná väzba ťahania, beží vždy raz)
+        const rw = D > 16000 ? (running ? 1 : 2) : D > 8000 ? (running ? 2 : 3) : (running ? 2 : 6);
+        updateDots(rw);
         adaptZR();
-        updateMosaic(running ? 2 : 6);
+        updateMosaic(rw);
         drawOutput();
         drawMap();
         drawChart();
@@ -469,6 +966,8 @@ function tickTour() {
     zCur = [a[0] + (b[0] - a[0]) * e + Math.cos(w) * 0.05, a[1] + (b[1] - a[1]) * e + Math.sin(w) * 0.05];
 }
 tourBtn.addEventListener('click', () => { tourOn = !tourOn; tourT0 = performance.now(); tourBtn.classList.toggle('active', tourOn); });
+const sharpBtn = document.getElementById('sharp');
+sharpBtn.addEventListener('click', () => { sharpOn = !sharpOn; sharpBtn.classList.toggle('active', sharpOn); sendCfgToBackend(); });
 
 // ==================== INTERAKCIA ====================
 let dragging = false;
@@ -484,24 +983,57 @@ mapCv.addEventListener('pointerup', () => dragging = false);
 
 const playBtn = document.getElementById('play');
 function syncPlay() { playBtn.textContent = running ? T().pause : T().train; playBtn.classList.toggle('active', running); }
-playBtn.addEventListener('click', () => { running = !running; syncPlay(); });
+playBtn.addEventListener('click', () => { running = !running; syncPlay(); backendRun(running); });
 syncPlay();
-document.getElementById('reset').addEventListener('click', () => {
+function resetTraining() {
     initNet(); steps = 0; lastLoss = 0; lossHist = []; smoothL = null; histStride = 1; strideCnt = 0; ZR = 1.15;
+    mosCell = 0; if (mosCtx) mosCtx.clearRect(0, 0, MS, MS); spsN = 0;
     document.getElementById('params').textContent = countParams().toLocaleString(T().locale);
     updateStats();
-});
+    backendReset();
+}
+document.getElementById('reset').addEventListener('click', resetTraining);
+
+// znovu navzorkuje všetky triedy pri novom rozlíšení (bez pridávania náhľadov)
+function resampleData() {
+    data = [];
+    for (let ci = 0; ci < classes.length; ci++) {
+        data.push({ x: sampleFrom(classes[ci].img, false), cls: ci, orig: true });
+        for (let i = 0; i < AUG_PER; i++) data.push({ x: sampleFrom(classes[ci].img, true), cls: ci, orig: false });
+    }
+    dotPos = data.map(() => null); dotIdx = 0;
+}
+function setResolution(px) {
+    if (px === IMG) return;
+    IMG = px; D = IMG * IMG * 3; IMG3 = IMG * 3; BS = pickBS();
+    SIZES = [D, 128, 32, 2, 32, 128, D];
+    gpx = new Float32Array(D);
+    acan.width = IMG; acan.height = IMG;                     // vzorkovacie plátno musí sledovať rozlíšenie
+    outImg = new ImageData(IMG, IMG); otmp.width = IMG; otmp.height = IMG;
+    resampleData();
+    resetTraining();
+}
 function slider(id, valId, fmt, cb) {
     const el = document.getElementById(id), out = document.getElementById(valId);
     const upd = () => { const v = cb(parseFloat(el.value)); out.textContent = fmt(v); };
     el.addEventListener('input', upd); upd();
 }
-slider('lr', 'lrVal', v => v < 0.001 ? v.toFixed(4) : v.toFixed(3), v => (lr = Math.pow(10, v), lr));
-slider('budget', 'budgetVal', v => '' + v, v => (budget = v, v));
+slider('lr', 'lrVal', v => v < 0.001 ? v.toFixed(4) : v.toFixed(3), v => (lr = Math.pow(10, v), sendCfgToBackend(), lr));
+slider('budget', 'budgetVal', v => '' + v, v => (budget = v, sendCfgToBackend(), v));
+
+document.querySelectorAll('#modeBtns button').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+
+document.querySelectorAll('#resBtns button').forEach(b => {
+    b.classList.toggle('active', +b.dataset.res === IMG);
+    b.addEventListener('click', () => {
+        document.querySelectorAll('#resBtns button').forEach(o => o.classList.remove('active'));
+        b.classList.add('active'); setResolution(+b.dataset.res);
+    });
+});
 
 const fileInput = document.getElementById('file');
 document.getElementById('upload').addEventListener('click', () => {
-    if (classes.length >= 6) { document.getElementById('err').textContent = T().errMax; return; }
+    if (classes.length >= 12) { document.getElementById('err').textContent = T().errMax; return; }
     fileInput.click();
 });
 fileInput.addEventListener('change', () => {
@@ -532,6 +1064,10 @@ Promise.all(SPRITES.map(sp => new Promise((res, rej) => {
     img.src = sp.src;
 }))).then(loaded => {
     for (const { img, color } of loaded) addClass(img, color);
+    // Worker je predvolený backend: trénuje mimo hlavného vlákna na plný výkon a s plnou dávkou,
+    // UI ostáva plynulé. ?mode=cpu|worker|webgpu prepíše.
+    const m0 = _qs.get('mode') || 'worker';
+    if (m0 !== 'cpu' && (m0 === 'worker' || m0 === 'webgpu')) setMode(m0);
     loop();
 }).catch(() => { document.getElementById('err').textContent = T().errLoad; });
 </script>
