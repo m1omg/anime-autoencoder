@@ -68,8 +68,18 @@ If WebGL2 float rendering isn't available the page points you back to the main p
   pixel, so the very first reconstructions show the average face instead of gray and Adam skips
   relearning global brightness.
 - **Cursor thumbnail:** a live decoded mini-preview rides along with the map cursor — on phones
-  the big preview sits below the fold. (These last three ideas were adapted from a GPT-5.6-built
-  sister demo of this same concept.)
+  the big preview sits below the fold.
+- **Centered inputs:** the encoder sees pixels as `x − 0.5`, so its first layer gets zero-mean
+  data instead of everything-positive values. In all backends (the WebGL edition shifts in-shader
+  so the raw texture can stay the reconstruction target).
+- **Deterministic runs:** a seeded mulberry32 RNG drives weight init, augmentation sampling,
+  batch picks and latent noise — every reload trains the same way, and the in-page Reset replays
+  the exact same run. `?seed=N` picks a different universe. (The anchors, bias init, cursor
+  thumbnail, centered inputs and seeding were adapted from a GPT-5.6-built sister demo.)
+- **Training survives refresh:** the weights are snapshotted to IndexedDB every few seconds
+  (plus when the tab is hidden or closed) and restored on load — keyed by resolution and seed so
+  a snapshot only ever meets the exact dataset it was trained on. The **⟲ Reset** button wipes
+  the snapshot along with the network.
 - **Augmentations:** each source image becomes 16 variants (shift / zoom / rotate / mirror),
   so real clusters form in the latent space instead of lonely isolated points.
 - **Eight faces** populate the space, so interpolation traverses a genuinely varied set instead

@@ -194,7 +194,11 @@ let ZR = 1.15;
 const anneal = () => 0.25 + 0.75 * Math.exp(-tAdam * BS / 150000);
 const noiseSigma = () => 0.02 * ZR * anneal();
 const TAU = Math.PI * 2;
-function randn() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v); }
+// deterministic seeded RNG (mulberry32): every load trains identically; ?seed=N changes the run
+const SEED = (((+new URLSearchParams(location.search).get('seed')) || 20260721)) >>> 0;
+let _rs = SEED;
+function rand() { _rs = (_rs + 0x6d2b79f5) >>> 0; let t = _rs; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }
+function randn() { let u = 0, v = 0; while (!u) u = rand(); while (!v) v = rand(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v); }
 const L = SIZES.length - 1;
 let tAdam = 0;
 // Latent anchors: each class gets its own spot on a circle and its samples are gently pulled
@@ -232,10 +236,10 @@ const FS_GATHER = HDR + `uniform sampler2D uData,uIdx;out vec4 O;
 void main(){ivec2 q=ivec2(gl_FragCoord.xy);
  int idx=int(texelFetch(uIdx,ivec2(q.y,0),0).r+0.5);
  O=vec4(texelFetch(uData,ivec2(q.x,idx),0).r,0.,0.,1.);}`;
-const FS_FORWARD = HDR + `uniform sampler2D uW,uB,uA;uniform int uCols,uAct;out vec4 O;
+const FS_FORWARD = HDR + `uniform sampler2D uW,uB,uA;uniform int uCols,uAct;uniform float uShift;out vec4 O;
 void main(){ivec2 q=ivec2(gl_FragCoord.xy);
  float s=texelFetch(uB,ivec2(q.x,0),0).r;
- for(int j=0;j<uCols;j++) s+=texelFetch(uW,ivec2(j,q.x),0).r*texelFetch(uA,ivec2(j,q.y),0).r;
+ for(int j=0;j<uCols;j++) s+=texelFetch(uW,ivec2(j,q.x),0).r*(texelFetch(uA,ivec2(j,q.y),0).r-uShift);
  if(uAct==0) s=max(s,0.); else if(uAct==2) s=1./(1.+exp(-s));
  O=vec4(s,0.,0.,1.);}`;
 const FS_NOISE = HDR + `uniform sampler2D uA,uN;out vec4 O;
@@ -253,10 +257,10 @@ void main(){ivec2 q=ivec2(gl_FragCoord.xy);
  float lz=texelFetch(uLat,q,0).r;
  s+=uLambda*lz+uGuide*(lz-texelFetch(uAnch,q,0).r);
  O=vec4(s,0.,0.,1.);}`;
-const FS_GRADW = HDR + `uniform sampler2D uDel,uA;uniform int uBatch;uniform float uInvB;out vec4 O;
+const FS_GRADW = HDR + `uniform sampler2D uDel,uA;uniform int uBatch;uniform float uInvB,uShift;out vec4 O;
 void main(){ivec2 q=ivec2(gl_FragCoord.xy);
  float s=0.;
- for(int b=0;b<uBatch;b++) s+=texelFetch(uDel,ivec2(q.y,b),0).r*texelFetch(uA,ivec2(q.x,b),0).r;
+ for(int b=0;b<uBatch;b++) s+=texelFetch(uDel,ivec2(q.y,b),0).r*(texelFetch(uA,ivec2(q.x,b),0).r-uShift);
  O=vec4(s*uInvB,0.,0.,1.);}`;
 const FS_GRADB = HDR + `uniform sampler2D uDel;uniform int uBatch;uniform float uInvB;out vec4 O;
 void main(){int i=int(gl_FragCoord.x);
@@ -414,7 +418,7 @@ function initNet() {
     for (let l = 0; l < L; l++) {
         const Y = layers[l], rows = Y.rows, cols = Y.cols, w = new Float32Array(rows * cols);
         if (ACTN[l] === 'relu') { const s = Math.sqrt(2 / cols); for (let i = 0; i < w.length; i++) w[i] = randn() * s; }
-        else { const s = Math.sqrt(6 / (cols + rows)); for (let i = 0; i < w.length; i++) w[i] = (Math.random() * 2 - 1) * s; }
+        else { const s = Math.sqrt(6 / (cols + rows)); for (let i = 0; i < w.length; i++) w[i] = (rand() * 2 - 1) * s; }
         Y.pi = 0;
         upload(Y.W[0], 0, 0, cols, rows, w);
         upload(Y.M[0], 0, 0, cols, rows, zero.subarray(0, rows * cols));
@@ -429,11 +433,12 @@ function fwd(l, inT, outT, y0, cnt) {
     run(pFwd, [outT], SIZES[l + 1], cnt, y0, pr => {
         bindTx(pr, 'uW', Y.W[Y.pi]); bindTx(pr, 'uB', Y.B[Y.pi]); bindTx(pr, 'uA', inT);
         setI(pr, 'uCols', SIZES[l]); setI(pr, 'uAct', ACODE[ACTN[l]]);
+        setF(pr, 'uShift', l === 0 ? 0.5 : 0);               // encoder input centered (x − 0.5); A0 stays raw as the target
     });
 }
 function trainStep(lr0) {
     for (let b = 0; b < BS; b++) {
-        const di = idxArr[b] = (Math.random() * data.length) | 0;
+        const di = idxArr[b] = (rand() * data.length) | 0;
         const a = anchors[data[di].cls] || ZERO2;
         anchArr[b * 2] = a[0]; anchArr[b * 2 + 1] = a[1];
     }
@@ -457,6 +462,7 @@ function trainStep(lr0) {
         run(pGradW, [Y.gW], Y.cols, Y.rows, 0, pr => {
             bindTx(pr, 'uDel', TR.DEL[l]); bindTx(pr, 'uA', TR.A[l]);
             setI(pr, 'uBatch', BS); setF(pr, 'uInvB', invB);
+            setF(pr, 'uShift', l === 0 ? 0.5 : 0);
         });
         run(pGradB, [Y.gB], Y.rows, 1, 0, pr => {
             bindTx(pr, 'uDel', TR.DEL[l]); setI(pr, 'uBatch', BS); setF(pr, 'uInvB', invB);
@@ -544,6 +550,57 @@ function renderOutputGL() {
 }
 function countParams() { let p = 0; for (let l = 0; l < L; l++) p += SIZES[l] * SIZES[l + 1] + SIZES[l + 1]; return p; }
 
+// ---- IndexedDB snapshot: a refresh keeps the training, the Reset button wipes it ----
+// ~14 MB of weights → IndexedDB. Key binds the seed, so a snapshot is only restored over the
+// identical (deterministically sampled) dataset. Weights are read back from the GPU textures.
+const DB_NAME = 'anime-ae', DB_STORE = 'snap';
+const snapKey = () => 'webgl:' + IMG + ':' + SEED;
+function idbOpen() {
+    return new Promise((res, rej) => {
+        const r = indexedDB.open(DB_NAME, 1);
+        r.onupgradeneeded = () => r.result.createObjectStore(DB_STORE);
+        r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+}
+async function idbPut(key, val) { try { const db = await idbOpen(); await new Promise((res, rej) => { const tx = db.transaction(DB_STORE, 'readwrite'); tx.objectStore(DB_STORE).put(val, key); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); db.close(); } catch (e) {} }
+async function idbGet(key) { try { const db = await idbOpen(); const v = await new Promise((res, rej) => { const q = db.transaction(DB_STORE).objectStore(DB_STORE).get(key); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); db.close(); return v; } catch (e) { return null; } }
+async function idbDel(key) { try { const db = await idbOpen(); await new Promise((res, rej) => { const tx = db.transaction(DB_STORE, 'readwrite'); tx.objectStore(DB_STORE).delete(key); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); db.close(); } catch (e) {} }
+function readTexR(tx, w, h, out) {   // R32F texture → floats (RGBA/FLOAT readback per EXT_color_buffer_float)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, FBO);
+    const m = Math.max(1, lastN);
+    for (let i = 0; i < m; i++) gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, i === 0 ? tx.t : null, 0);
+    lastN = 1;
+    gl.drawBuffers(DRAWBUFS[0]);
+    const buf = new Float32Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, buf);
+    for (let i = 0; i < w * h; i++) out[i] = buf[i * 4];
+}
+function packWeightsGL() {
+    const f = new Float32Array(countParams()); let o = 0;
+    for (const Y of layers) { const n = Y.cols * Y.rows; readTexR(Y.W[Y.pi], Y.cols, Y.rows, f.subarray(o, o + n)); o += n; }
+    for (const Y of layers) { readTexR(Y.B[Y.pi], Y.rows, 1, f.subarray(o, o + Y.rows)); o += Y.rows; }
+    return f;
+}
+function loadWeightsGL(f) {
+    let o = 0;
+    for (const Y of layers) { const n = Y.cols * Y.rows; upload(Y.W[Y.pi], 0, 0, Y.cols, Y.rows, f.subarray(o, o + n)); o += n; }
+    for (const Y of layers) { upload(Y.B[Y.pi], 0, 0, Y.rows, 1, f.subarray(o, o + Y.rows)); o += Y.rows; }
+}
+let lastSaveT = 0, lastSavedSteps = 0;
+function saveSnapshot() {
+    if (!gl || !steps || steps === lastSavedSteps) return;
+    lastSavedSteps = steps;
+    idbPut(snapKey(), { w: packWeightsGL(), steps, tAdam, n: classes.length, ts: Date.now() });
+}
+async function restoreSnapshot() {
+    const snap = await idbGet(snapKey());
+    if (!snap || !snap.w || snap.n !== classes.length || snap.w.length !== countParams()) return false;
+    loadWeightsGL(snap.w); steps = snap.steps || 0; tAdam = snap.tAdam || 0; lastSavedSteps = steps;
+    return true;
+}
+addEventListener('pagehide', saveSnapshot);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveSnapshot(); });
+
 // ==================== DATA: sprites + augmentations ====================
 const SPRITES = [
     { src: 'sprites/klee.png',      color: '#ff6a6a' },
@@ -565,10 +622,10 @@ function sampleFrom(img, aug) {
     actx.fillStyle = '#000'; actx.fillRect(0, 0, IMG, IMG);
     actx.save(); actx.translate(IMG / 2, IMG / 2);
     if (aug) {
-        actx.translate((Math.random() * 2 - 1) * 3, (Math.random() * 2 - 1) * 3);
-        const s = 0.92 + Math.random() * 0.2;
-        actx.scale(Math.random() < 0.5 ? -s : s, s);
-        actx.rotate((Math.random() * 2 - 1) * 0.1);
+        actx.translate((rand() * 2 - 1) * 3, (rand() * 2 - 1) * 3);
+        const s = 0.92 + rand() * 0.2;
+        actx.scale(rand() < 0.5 ? -s : s, s);
+        actx.rotate((rand() * 2 - 1) * 0.1);
     }
     actx.drawImage(img, -IMG / 2, -IMG / 2, IMG, IMG);
     actx.restore();
@@ -720,6 +777,7 @@ function loop() {
         }
         const now = performance.now();
         if (now - spsT > 500) { sps = stepAcc / ((now - spsT) / 1000); stepAcc = 0; spsT = now; }
+        if (running && now - lastSaveT > 30000) { lastSaveT = now; saveSnapshot(); }
         tickTour();
         if (frame % 2 === 0 || !running) updateDots();
         adaptZR();
@@ -769,9 +827,11 @@ mapCv.addEventListener('pointerup', () => dragging = false);
 
 const playBtn = document.getElementById('play');
 function syncPlay() { playBtn.textContent = running ? T().pause : T().train; playBtn.classList.toggle('active', running); }
-playBtn.addEventListener('click', () => { running = !running; syncPlay(); });
+playBtn.addEventListener('click', () => { running = !running; syncPlay(); if (!running) saveSnapshot(); });
 syncPlay();
 document.getElementById('reset').addEventListener('click', () => {
+    _rs = SEED;                                              // reset ≡ fresh load (deterministic)
+    idbDel(snapKey()); lastSavedSteps = 0;
     initNet(); primeOutputBias(); steps = 0; lastLoss = 0; lossHist = []; smoothL = null; histStride = 1; strideCnt = 0; ZR = 1.15;
     document.getElementById('params').textContent = countParams().toLocaleString(T().locale);
     updateStats();
@@ -822,8 +882,10 @@ Promise.all(SPRITES.map(sp => new Promise((res, rej) => {
     img.onload = () => res({ img, color: sp.color });
     img.onerror = rej;
     img.src = sp.src;
-}))).then(loaded => {
+}))).then(async loaded => {
     for (const { img, color } of loaded) addClass(img, color);
+    await restoreSnapshot();                                 // a refresh continues where training left off
+    updateStats();
     loop();
 }).catch(() => { document.getElementById('err').textContent = T().errLoad; });
 </script>

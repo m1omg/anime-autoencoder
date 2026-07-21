@@ -247,7 +247,12 @@ let ZR = 1.15;                                               // polomer mapy v l
 const anneal = () => 0.25 + 0.75 * Math.exp(-steps * bsFor(mode) / 150000);
 const noiseSigma = () => 0.02 * ZR * anneal();               // šum v latente škáluje s rozsahom
 const TAU = Math.PI * 2;
-function randn() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v); }
+// Deterministický seedovaný RNG (mulberry32): každé načítanie trénuje rovnako — init váh,
+// augmentácie, výber dávok aj šum idú z jedného prúdu; ?seed=N vytvorí iný „vesmír"
+const SEED = (((+_qs.get('seed')) || 20260721)) >>> 0;
+let _rs = SEED;
+function rand() { _rs = (_rs + 0x6d2b79f5) >>> 0; let t = _rs; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }
+function randn() { let u = 0, v = 0; while (!u) u = rand(); while (!v) v = rand(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v); }
 // Latentné kotvy: každá trieda má vlastné miesto na kružnici a jej vzorky k nemu jemne ťaháme.
 // Podobné (modrovlasé) postavy sa tak nemôžu nahromadiť na jednom bode — priznaný učiteľský
 // zásah à la „teaching-model honesty", tlmí sa spolu s ostatnými regularizátormi.
@@ -272,7 +277,7 @@ function initNet() {
     for (let l = 0; l < L; l++) {
         const rows = SIZES[l + 1], cols = SIZES[l], w = new Float32Array(rows * cols);
         if (ACTN[l] === 'relu') { const s = Math.sqrt(2 / cols); for (let i = 0; i < w.length; i++) w[i] = randn() * s; }
-        else { const s = Math.sqrt(6 / (cols + rows)); for (let i = 0; i < w.length; i++) w[i] = (Math.random() * 2 - 1) * s; }
+        else { const s = Math.sqrt(6 / (cols + rows)); for (let i = 0; i < w.length; i++) w[i] = (rand() * 2 - 1) * s; }
         W.push(w); B.push(new Float32Array(rows));
         mW.push(new Float32Array(w.length)); vW.push(new Float32Array(w.length));
         mB.push(new Float32Array(rows)); vB.push(new Float32Array(rows));
@@ -297,7 +302,9 @@ function layerFwd(l) {
         out[i] = kind === 'relu' ? (s > 0 ? s : 0) : kind === 'lin' ? s : 1 / (1 + Math.exp(-s));
     }
 }
-function encode(x) { A[0].set(x); for (let l = 0; l <= LATL; l++) layerFwd(l); return A[LATL + 1]; }
+// vstup enkodéra je centrovaný (x − 0.5): prvá vrstva dostáva dáta s nulovým priemerom
+function setInput(x) { const a = A[0]; for (let i = 0; i < D; i++) a[i] = x[i] - 0.5; }
+function encode(x) { setInput(x); for (let l = 0; l <= LATL; l++) layerFwd(l); return A[LATL + 1]; }
 function decode(z) { A[LATL + 1].set(z); for (let l = LATL + 1; l < L; l++) layerFwd(l); return A[L]; }
 function dact(l, k) {
     if (ACTN[l] === 'relu') return Z[l][k] > 0 ? 1 : 0;
@@ -334,8 +341,8 @@ function trainStep(lr) {
     let se = 0;
     const lam = LAMBDA * anneal(), gd = GUIDE * anneal();
     for (let b = 0; b < BS; b++) {
-        const dat = data[(Math.random() * data.length) | 0], x = dat.x, anc = anchors[dat.cls] || ZERO2;
-        A[0].set(x);
+        const dat = data[(rand() * data.length) | 0], x = dat.x, anc = anchors[dat.cls] || ZERO2;
+        setInput(x);
         for (let l = 0; l < L; l++) {
             layerFwd(l);
             if (l === LATL) { latClean.set(A[LATL + 1]); const sg = noiseSigma(); for (let k = 0; k < 2; k++) A[LATL + 1][k] += randn() * sg; }
@@ -399,6 +406,36 @@ function unpackWeights(f) {
 }
 function packDataBuf() { const n = data.length, f = new Float32Array(n * D); for (let i = 0; i < n; i++) f.set(data[i].x, i * D); return { buf: f.buffer, n, dim: D }; }
 
+// ---- Snímka tréningu v IndexedDB: refresh nezmaže natrénované váhy (Reset áno) ----
+// Váhy majú ~12 MB → IndexedDB (localStorage by nestačil). Kľúč viaže rozlíšenie aj seed,
+// aby sa snímka obnovila len nad identickým (deterministicky navzorkovaným) datasetom.
+const DB_NAME = 'anime-ae', DB_STORE = 'snap';
+const snapKey = () => 'main:' + IMG + ':' + SEED;
+function idbOpen() {
+    return new Promise((res, rej) => {
+        const r = indexedDB.open(DB_NAME, 1);
+        r.onupgradeneeded = () => r.result.createObjectStore(DB_STORE);
+        r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+}
+async function idbPut(key, val) { try { const db = await idbOpen(); await new Promise((res, rej) => { const tx = db.transaction(DB_STORE, 'readwrite'); tx.objectStore(DB_STORE).put(val, key); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); db.close(); } catch (e) {} }
+async function idbGet(key) { try { const db = await idbOpen(); const v = await new Promise((res, rej) => { const q = db.transaction(DB_STORE).objectStore(DB_STORE).get(key); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); db.close(); return v; } catch (e) { return null; } }
+async function idbDel(key) { try { const db = await idbOpen(); await new Promise((res, rej) => { const tx = db.transaction(DB_STORE, 'readwrite'); tx.objectStore(DB_STORE).delete(key); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); db.close(); } catch (e) {} }
+let lastSaveT = 0, lastSavedSteps = 0;
+function saveSnapshot() {
+    if (!steps || steps === lastSavedSteps) return;
+    lastSavedSteps = steps;
+    idbPut(snapKey(), { w: packWeights(), steps, tAdam, n: classes.length, ts: Date.now() });
+}
+async function restoreSnapshot() {
+    const snap = await idbGet(snapKey());
+    if (!snap || !snap.w || snap.n !== classes.length || snap.w.length !== countParams()) return false;
+    unpackWeights(snap.w); steps = snap.steps || 0; tAdam = snap.tAdam || 0; lastSavedSteps = steps;
+    return true;
+}
+addEventListener('pagehide', saveSnapshot);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveSnapshot(); });
+
 let mode = 'cpu', worker = null, gpu = null, statusKey = '';
 // Worker trénuje na vlastnej kópii siete (rovnaká matematika ako vyššie) a posiela snímky váh späť.
 const WORKER_SRC = `'use strict';
@@ -408,11 +445,13 @@ const latClean=new Float32Array(2);
 let flat=null,N=0,dim=0,lr=0.002,BS=5,SHARP=0.7,sharpOn=true,noise=0.03,budget=22,running=false,GUIDE=0,ANCH=null,CLS=null;
 let steps=0,lastLoss=0,looping=false,lastPostT=0,postAcc=0;
 const TAU=Math.PI*2;
-function randn(){let u=0,v=0;while(!u)u=Math.random();while(!v)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(TAU*v);}
+let _ws=1;
+function rand(){_ws=(_ws+0x6d2b79f5)>>>0;let t=_ws;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296;}
+function randn(){let u=0,v=0;while(!u)u=rand();while(!v)v=rand();return Math.sqrt(-2*Math.log(u))*Math.cos(TAU*v);}
 function initNet(){W=[];B=[];mW=[];vW=[];mB=[];vB=[];gW=[];gB=[];A=[];Zb=[];DEL=[];tAdam=0;A.push(new Float32Array(SIZES[0]));
  for(let l=0;l<L;l++){const rows=SIZES[l+1],cols=SIZES[l],w=new Float32Array(rows*cols);
   if(ACTN[l]==='relu'){const s=Math.sqrt(2/cols);for(let i=0;i<w.length;i++)w[i]=randn()*s;}
-  else{const s=Math.sqrt(6/(cols+rows));for(let i=0;i<w.length;i++)w[i]=(Math.random()*2-1)*s;}
+  else{const s=Math.sqrt(6/(cols+rows));for(let i=0;i<w.length;i++)w[i]=(rand()*2-1)*s;}
   W.push(w);B.push(new Float32Array(rows));mW.push(new Float32Array(w.length));vW.push(new Float32Array(w.length));
   mB.push(new Float32Array(rows));vB.push(new Float32Array(rows));gW.push(new Float32Array(w.length));gB.push(new Float32Array(rows));
   A.push(new Float32Array(rows));Zb.push(new Float32Array(rows));DEL.push(new Float32Array(rows));}
@@ -424,7 +463,8 @@ function addSharp(out,tgt){
  for(let y=0;y<IMG;y++){const row=y*IMG3;for(let x=0;x<IMG-1;x++){const cur=row+x*3;for(let c=0;c<3;c++){const i=cur+c,n=i+3;const d=SHARP*((out[n]-out[i])-(tgt[n]-tgt[i]));gpx[n]+=d;gpx[i]-=d;}}}
  for(let y=0;y<IMG-1;y++){const row=y*IMG3;for(let x=0;x<IMG;x++){const cur=row+x*3;for(let c=0;c<3;c++){const i=cur+c,n=i+IMG3;const d=SHARP*((out[n]-out[i])-(tgt[n]-tgt[i]));gpx[n]+=d;gpx[i]-=d;}}}}
 function step(){for(let l=0;l<L;l++){gW[l].fill(0);gB[l].fill(0);}let se=0;
- for(let b=0;b<BS;b++){const idx=(Math.random()*N)|0,x=flat.subarray(idx*dim,idx*dim+dim),anc=(ANCH&&CLS)?ANCH[CLS[idx]]:null;A[0].set(x);
+ for(let b=0;b<BS;b++){const idx=(rand()*N)|0,x=flat.subarray(idx*dim,idx*dim+dim),anc=(ANCH&&CLS)?ANCH[CLS[idx]]:null;
+  for(let i=0;i<D;i++)A[0][i]=x[i]-.5;
   for(let l=0;l<L;l++){fwd(l);if(l===2){latClean.set(A[3]);for(let k=0;k<2;k++)A[3][k]+=randn()*noise;}}
   const out=A[L],dOut=DEL[L-1];for(let i=0;i<D;i++){const e=out[i]-x[i];se+=e*e;gpx[i]=e;}
   if(sharpOn&&SHARP>0)addSharp(out,x);for(let i=0;i<D;i++)dOut[i]=gpx[i]*out[i]*(1-out[i]);
@@ -449,11 +489,11 @@ function tick(){looping=false;
  if(running){looping=true;sched();}}
 function ensureLoop(){if(!looping&&running){looping=true;sched();}}
 self.onmessage=function(e){const m=e.data;
- if(m.type==='init'){SIZES=m.sizes;IMG=m.IMG;D=m.D;IMG3=m.IMG3;L=SIZES.length-1;ACTN=m.ACTN;LAMBDA=m.LAMBDA;WARM=m.WARM;initNet();steps=0;}
+ if(m.type==='init'){SIZES=m.sizes;IMG=m.IMG;D=m.D;IMG3=m.IMG3;L=SIZES.length-1;ACTN=m.ACTN;LAMBDA=m.LAMBDA;WARM=m.WARM;if(m.seed!==undefined)_ws=m.seed>>>0;initNet();steps=0;}
  else if(m.type==='weights'){loadW(new Float32Array(m.w));}
  else if(m.type==='data'){flat=new Float32Array(m.buf);N=m.n;dim=m.dim;CLS=m.cls||null;}
  else if(m.type==='config'){lr=m.lr;BS=m.BS;SHARP=m.SHARP;sharpOn=m.sharpOn;noise=m.noise;budget=m.budget;if(m.lambda!==undefined)LAMBDA=m.lambda;GUIDE=m.guide||0;ANCH=m.anchors||null;}
- else if(m.type==='reset'){if(m.sizes){SIZES=m.sizes;IMG=m.IMG;D=m.D;IMG3=m.IMG3;L=SIZES.length-1;}initNet();steps=0;}
+ else if(m.type==='reset'){if(m.sizes){SIZES=m.sizes;IMG=m.IMG;D=m.D;IMG3=m.IMG3;L=SIZES.length-1;}if(m.seed!==undefined)_ws=m.seed>>>0;initNet();steps=0;}
  else if(m.type==='run'){running=m.on;lastPostT=performance.now();ensureLoop();}};`;
 let workerURL = null;
 function ensureWorker() {
@@ -476,7 +516,7 @@ function sendCfgToBackend() {
 }
 function backendReset() {   // hlavná sieť už bola re-inicializovaná; posuň stav do backendu
     if (mode === 'worker' && worker) {
-        worker.postMessage({ type: 'reset', sizes: SIZES, IMG, D, IMG3 });
+        worker.postMessage({ type: 'reset', sizes: SIZES, IMG, D, IMG3, seed: (SEED ^ 0x9e3779b9) >>> 0 });
         const w = packWeights(); worker.postMessage({ type: 'weights', w: w.buffer }, [w.buffer]);
         sendDataToBackend(); sendCfgToBackend(); worker.postMessage({ type: 'run', on: running });
     }
@@ -494,7 +534,7 @@ function setMode(m) {
     mode = m;
     if (m === 'worker') {
         ensureWorker();
-        worker.postMessage({ type: 'init', sizes: SIZES, IMG, D, IMG3, ACTN, LAMBDA, WARM });
+        worker.postMessage({ type: 'init', sizes: SIZES, IMG, D, IMG3, ACTN, LAMBDA, WARM, seed: (SEED ^ 0x9e3779b9) >>> 0 });
         const w = packWeights(); worker.postMessage({ type: 'weights', w: w.buffer }, [w.buffer]);
         sendDataToBackend(); sendCfgToBackend(); worker.postMessage({ type: 'run', on: running });
         setStatusKey('workerOn');
@@ -513,7 +553,7 @@ loadin: `struct Li{D:u32,bs:u32,p0:u32,p1:u32};
 @group(0)@binding(3)var<storage,read_write>Ain:array<f32>;
 @compute @workgroup_size(64) fn main(@builtin(global_invocation_id)g:vec3<u32>){
  let idx=g.x; let tot=li.D*li.bs; if(idx>=tot){return;}
- let p=idx/li.bs; let b=idx%li.bs; Ain[idx]=data[samp[b]*li.D+p]; }`,
+ let p=idx/li.bs; let b=idx%li.bs; Ain[idx]=data[samp[b]*li.D+p]-0.5; }`,
 fwd: `struct Dm{rows:u32,cols:u32,bs:u32,kind:u32,isLat:u32,p0:u32,p1:u32,p2:u32};
 @group(0)@binding(0)var<uniform>dm:Dm;
 @group(0)@binding(1)var<storage,read>Wl:array<f32>;
@@ -677,7 +717,7 @@ async function makeGPU(device) {
         device.queue.writeBuffer(stUBO, 0, new Float32Array([G.cfg.lr * warm, c1, c2, 1 / BS, G.cfg.SHARP, G.cfg.lambda, b1, b2, G.cfg.guide || 0, 0, 0, 0]).buffer);
         const idx = new Uint32Array(BS), noi = new Float32Array(2 * BS), anc = new Float32Array(2 * BS);
         for (let b = 0; b < BS; b++) {
-            const di = idx[b] = (Math.random() * G.dataN) | 0;
+            const di = idx[b] = (rand() * G.dataN) | 0;
             const a = anchors[data[di] ? data[di].cls : 0] || ZERO2;
             anc[b] = a[0]; anc[BS + b] = a[1];             // rozloženie anch[k*bs+b] ako noise
         }
@@ -722,7 +762,7 @@ async function makeGPU(device) {
             const flat = new Float32Array(staging.getMappedRange().slice(0)); staging.unmap();
             unpackWeights(flat);
             // odhad straty z snímky (priemer cez viac vzoriek, bez šumu — stabilné číslo)
-            if (data.length) { let se = 0; const K = Math.min(8, data.length); for (let s = 0; s < K; s++) { const x = data[(Math.random() * data.length) | 0].x; const o2 = decode(encode(x)); for (let i = 0; i < D; i++) { const e = o2[i] - x[i]; se += e * e; } } lastLoss = se / (K * D); pushLoss(lastLoss); }
+            if (data.length) { let se = 0; const K = Math.min(8, data.length); for (let s = 0; s < K; s++) { const x = data[(rand() * data.length) | 0].x; const o2 = decode(encode(x)); for (let i = 0; i < D; i++) { const e = o2[i] - x[i]; se += e * e; } } lastLoss = se / (K * D); pushLoss(lastLoss); }
         } catch (e) { /* ignoruj jednotlivé zlyhanie čítania */ } finally { G.mapping = false; }
     }
     async function forwardReadOutput(sampleIdx) {   // pre self-test: forward-only, prečítaj A[L] lane 0
@@ -730,7 +770,7 @@ async function makeGPU(device) {
         device.queue.writeBuffer(noiseBuf, 0, new Float32Array(2 * BS).buffer);
         // nastav vstup A[0] priamo z dát
         const x = data[sampleIdx].x, inFlat = new Float32Array(D * BS);
-        for (let b = 0; b < BS; b++) for (let i = 0; i < D; i++) inFlat[i * BS + b] = x[i];
+        for (let b = 0; b < BS; b++) for (let i = 0; i < D; i++) inFlat[i * BS + b] = x[i] - 0.5;
         device.queue.writeBuffer(Ab[0], 0, inFlat.buffer);
         const enc = device.createCommandEncoder(); const p = enc.beginComputePass();
         for (let l = 0; l < L; l++) { p.setPipeline(pipes.fwd); p.setBindGroup(0, groups.fwd[l]); p.dispatchWorkgroups(wg(sizes[l + 1] * BS)); }
@@ -752,7 +792,7 @@ async function makeGPU(device) {
     G.forwardReadOutput = forwardReadOutput;
     return G;
 }
-function gRandn() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+function gRandn() { let u = 0, v = 0; while (!u) u = rand(); while (!v) v = rand(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
 
 async function startWebGPU(prev) {
     setStatusKey('gpuChecking');
@@ -814,10 +854,10 @@ function sampleFrom(img, aug) {
     actx.fillStyle = '#000'; actx.fillRect(0, 0, IMG, IMG);
     actx.save(); actx.translate(IMG / 2, IMG / 2);
     if (aug) {
-        actx.translate((Math.random() * 2 - 1) * 3, (Math.random() * 2 - 1) * 3);
-        const s = 0.92 + Math.random() * 0.2;
-        actx.scale(Math.random() < 0.5 ? -s : s, s);
-        actx.rotate((Math.random() * 2 - 1) * 0.1);
+        actx.translate((rand() * 2 - 1) * 3, (rand() * 2 - 1) * 3);
+        const s = 0.92 + rand() * 0.2;
+        actx.scale(rand() < 0.5 ? -s : s, s);
+        actx.rotate((rand() * 2 - 1) * 0.1);
     }
     actx.drawImage(img, -IMG / 2, -IMG / 2, IMG, IMG);
     actx.restore();
@@ -978,6 +1018,7 @@ function loop() {
         const now = performance.now();
         if (now - spsT > 500) { sps = (steps - spsN) / ((now - spsT) / 1000); spsN = steps; spsT = now; }
         if (mode !== 'cpu' && now - lastCfgSync > 2000) { lastCfgSync = now; sendCfgToBackend(); }   // šum sleduje rastúce ZR
+        if (running && now - lastSaveT > 10000) { lastSaveT = now; saveSnapshot(); }
         tickTour();
         // dekódy mozaiky/bodiek za snímok — pri vyššom rozlíšení menej, aby ťahanie ostalo plynulé
         // (drawOutput, spätná väzba ťahania, beží vždy raz)
@@ -1030,9 +1071,11 @@ mapCv.addEventListener('pointerup', () => dragging = false);
 
 const playBtn = document.getElementById('play');
 function syncPlay() { playBtn.textContent = running ? T().pause : T().train; playBtn.classList.toggle('active', running); }
-playBtn.addEventListener('click', () => { running = !running; syncPlay(); backendRun(running); });
+playBtn.addEventListener('click', () => { running = !running; syncPlay(); backendRun(running); if (!running) saveSnapshot(); });
 syncPlay();
 function resetTraining() {
+    _rs = SEED;                                              // reset ≡ čerstvé načítanie (deterministicky)
+    idbDel(snapKey()); lastSavedSteps = 0;
     initNet(); primeOutputBias(); steps = 0; lastLoss = 0; lossHist = []; smoothL = null; histStride = 1; strideCnt = 0; ZR = 1.15;
     mosCell = 0; if (mosCtx) mosCtx.clearRect(0, 0, MS, MS); spsN = 0;
     document.getElementById('params').textContent = countParams().toLocaleString(T().locale);
@@ -1109,8 +1152,10 @@ Promise.all(SPRITES.map(sp => new Promise((res, rej) => {
     img.onload = () => res({ img, color: sp.color });
     img.onerror = rej;
     img.src = sp.src;
-}))).then(loaded => {
+}))).then(async loaded => {
     for (const { img, color } of loaded) addClass(img, color);
+    await restoreSnapshot();                                 // refresh pokračuje tam, kde tréning skončil
+    updateStats();
     // Worker je predvolený backend: trénuje mimo hlavného vlákna na plný výkon a s plnou dávkou,
     // UI ostáva plynulé. ?mode=cpu|worker|webgpu prepíše.
     const m0 = _qs.get('mode') || 'worker';
