@@ -113,9 +113,10 @@ const STR = {
         <b>entirely on the GPU</b>: every matrix multiply, the whole backpropagation and the Adam optimizer run
         as WebGL2 fragment-shader passes over float textures — no libraries. The mosaic is a <b>16×16 grid</b>
         decoded on the GPU, the big preview is upscaled with <b>bicubic (Catmull-Rom)</b> filtering, and
-        everything renders at native HiDPI resolution. Same tricks as the CPU version: linear latent with a
-        gentle pull to the origin, latent noise for a smooth map, 16 augmented variants per image.
-        Large dots with an outline are the originals.`,
+        everything renders at native HiDPI resolution. Same tricks as the main page: linear latent with a
+        gentle pull to the origin, latent noise for a smooth map (both anneal over time), 16 augmented
+        variants per image, and each class gently <b>anchored</b> to its own spot on a circle so look-alike
+        characters can't pile onto the same point. Large dots with an outline are the originals.`,
         errLoad: '⚠ Sprites failed to load (serve over HTTP, not file://).',
         errImg: '⚠ This file can’t be loaded as an image.',
         errMax: '⚠ Maximum of 12 images.',
@@ -139,9 +140,10 @@ const STR = {
         <b>celá na GPU</b>: každé násobenie matíc, celá backpropagation aj Adam optimalizátor bežia ako
         WebGL2 fragment-shader passy nad float textúrami — bez knižníc. Mozaika je <b>mriežka 16×16</b>
         dekódovaná na GPU, veľký náhľad je zväčšený <b>bikubickým (Catmull-Rom)</b> filtrom a všetko sa
-        kreslí v natívnom HiDPI rozlíšení. Rovnaké triky ako v CPU verzii: lineárny latent s jemným ťahom
-        k stredu, šum v latente pre hladkú mapu, 16 augmentovaných variantov na obrázok.
-        Veľké bodky s obrysom sú originály.`,
+        kreslí v natívnom HiDPI rozlíšení. Rovnaké triky ako na hlavnej stránke: lineárny latent s jemným
+        ťahom k stredu, šum v latente pre hladkú mapu (oboje sa časom tlmí), 16 augmentovaných variantov
+        na obrázok a každá trieda jemne <b>ukotvená</b> na vlastnom mieste na kružnici, aby sa podobné
+        postavy nenahromadili na jednom bode. Veľké bodky s obrysom sú originály.`,
         errLoad: '⚠ Sprity sa nenačítali (spusti cez server, nie file://).',
         errImg: '⚠ Tento súbor sa nedá načítať ako obrázok.',
         errMax: '⚠ Maximálne 12 obrázkov.',
@@ -195,6 +197,19 @@ const TAU = Math.PI * 2;
 function randn() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v); }
 const L = SIZES.length - 1;
 let tAdam = 0;
+// Latent anchors: each class gets its own spot on a circle and its samples are gently pulled
+// there — look-alike classes can't pile onto the same point (a disclosed teaching nudge,
+// annealed together with the other regularizers).
+const GUIDE = 0.03, ZERO2 = [0, 0];
+let anchors = [];
+function computeAnchors() {
+    const n = classes.length;
+    anchors = classes.map((_, i) => {
+        if (n < 2) return [0, 0];
+        const a = -Math.PI / 2 + TAU * i / n;
+        return [Math.cos(a) * 0.9, Math.sin(a) * 0.9];
+    });
+}
 
 // ==================== WEBGL2 GPGPU ENGINE ====================
 // Everything — forward passes, backprop, Adam — runs as fragment-shader render
@@ -230,12 +245,13 @@ const FS_DOUT = HDR + `uniform sampler2D uOut,uX;out vec4 O;
 void main(){ivec2 q=ivec2(gl_FragCoord.xy);
  float o=texelFetch(uOut,q,0).r,x=texelFetch(uX,q,0).r;
  O=vec4((o-x)*o*(1.-o),0.,0.,1.);}`;
-const FS_DBACK = HDR + `uniform sampler2D uW,uDel,uA,uLat;uniform int uRows,uAct;uniform float uLambda;out vec4 O;
+const FS_DBACK = HDR + `uniform sampler2D uW,uDel,uA,uLat,uAnch;uniform int uRows,uAct;uniform float uLambda,uGuide;out vec4 O;
 void main(){ivec2 q=ivec2(gl_FragCoord.xy);
  float s=0.;
  for(int i=0;i<uRows;i++) s+=texelFetch(uW,ivec2(q.x,i),0).r*texelFetch(uDel,ivec2(i,q.y),0).r;
  if(uAct==0) s*=texelFetch(uA,q,0).r>0.?1.:0.;
- s+=uLambda*texelFetch(uLat,q,0).r;
+ float lz=texelFetch(uLat,q,0).r;
+ s+=uLambda*lz+uGuide*(lz-texelFetch(uAnch,q,0).r);
  O=vec4(s,0.,0.,1.);}`;
 const FS_GRADW = HDR + `uniform sampler2D uDel,uA;uniform int uBatch;uniform float uInvB;out vec4 O;
 void main(){ivec2 q=ivec2(gl_FragCoord.xy);
@@ -349,7 +365,7 @@ function run(pr, outs, w, cnt, y0, setup) {
 
 // per-layer parameter textures (ping-pong for W/B and their Adam moments)
 let layers = [], TR, dots, mos, cur, dataTex;
-const idxArr = new Float32Array(BS), noiseArr = new Float32Array(2 * BS);
+const idxArr = new Float32Array(BS), noiseArr = new Float32Array(2 * BS), anchArr = new Float32Array(2 * BS);
 const lossBuf = new Float32Array(BS * 4), dotBuf = new Float32Array(NMAX * 4);
 const mosLatBuf = new Float32Array(2 * MCH), curLatBuf = new Float32Array(2);
 const idxAllArr = new Float32Array(NMAX);
@@ -382,7 +398,7 @@ function initGL() {
     TR = {                                                     // training pipeline (batch = BS)
         A: SIZES.map(s => tex(s, BS)),
         DEL: SIZES.slice(1).map(s => tex(s, BS)),
-        latClean: tex(2, BS), noise: tex(2, BS), idx: tex(BS, 1),
+        latClean: tex(2, BS), noise: tex(2, BS), anch: tex(2, BS), idx: tex(BS, 1),
         lossOut: tex(BS, 1, gl.RGBA32F)
     };
     dots = {                                                   // encode-all pipeline (batch = NMAX)
@@ -416,11 +432,16 @@ function fwd(l, inT, outT, y0, cnt) {
     });
 }
 function trainStep(lr0) {
-    for (let b = 0; b < BS; b++) idxArr[b] = (Math.random() * data.length) | 0;
-    const lam = LAMBDA * anneal(), sg = noiseSigma();
+    for (let b = 0; b < BS; b++) {
+        const di = idxArr[b] = (Math.random() * data.length) | 0;
+        const a = anchors[data[di].cls] || ZERO2;
+        anchArr[b * 2] = a[0]; anchArr[b * 2 + 1] = a[1];
+    }
+    const lam = LAMBDA * anneal(), gd = GUIDE * anneal(), sg = noiseSigma();
     for (let k = 0; k < 2 * BS; k++) noiseArr[k] = randn() * sg;
     upload(TR.idx, 0, 0, BS, 1, idxArr);
     upload(TR.noise, 0, 0, 2, BS, noiseArr);
+    upload(TR.anch, 0, 0, 2, BS, anchArr);
     run(pGather, [TR.A[0]], D, BS, 0, pr => { bindTx(pr, 'uData', dataTex); bindTx(pr, 'uIdx', TR.idx); });
     fwd(0, TR.A[0], TR.A[1], 0, BS);
     fwd(1, TR.A[1], TR.A[2], 0, BS);
@@ -442,9 +463,9 @@ function trainStep(lr0) {
         });
         if (l > 0) run(pDback, [TR.DEL[l - 1]], SIZES[l], BS, 0, pr => {
             bindTx(pr, 'uW', Y.W[Y.pi]); bindTx(pr, 'uDel', TR.DEL[l]);
-            bindTx(pr, 'uA', TR.A[l]); bindTx(pr, 'uLat', TR.latClean);
+            bindTx(pr, 'uA', TR.A[l]); bindTx(pr, 'uLat', TR.latClean); bindTx(pr, 'uAnch', TR.anch);
             setI(pr, 'uRows', Y.rows); setI(pr, 'uAct', ACODE[ACTN[l - 1]]);
-            setF(pr, 'uLambda', l - 1 === LATL ? lam : 0);
+            setF(pr, 'uLambda', l - 1 === LATL ? lam : 0); setF(pr, 'uGuide', l - 1 === LATL ? gd : 0);
         });
     }
     tAdam++;
@@ -555,13 +576,27 @@ function sampleFrom(img, aug) {
     for (let i = 0; i < IMG * IMG; i++) { x[i * 3] = d[i * 4] / 255; x[i * 3 + 1] = d[i * 4 + 1] / 255; x[i * 3 + 2] = d[i * 4 + 2] / 255; }
     return x;
 }
+const meanAcc = new Float32Array(D);
+let meanN = 0;
 function pushSample(x, cls, orig) {
     upload(dataTex, 0, data.length, D, 1, x);
+    for (let i = 0; i < D; i++) meanAcc[i] += x[i];
+    meanN++;
     data.push({ cls, orig });
+}
+// decoder output bias starts at the logit of the dataset's mean pixel — first frames show
+// the average face instead of gray and Adam skips learning global brightness
+function primeOutputBias() {
+    if (!meanN) return;
+    const bo = new Float32Array(D);
+    for (let i = 0; i < D; i++) { const v = Math.min(0.975, Math.max(0.025, meanAcc[i] / meanN)); bo[i] = Math.log(v / (1 - v)); }
+    const Y = layers[L - 1];
+    upload(Y.B[Y.pi], 0, 0, D, 1, bo);
 }
 function addClass(img, color) {
     const cls = classes.length;
     classes.push({ img, color });
+    computeAnchors();
     pushSample(sampleFrom(img, false), cls, true);
     for (let i = 0; i < AUG_PER; i++) pushSample(sampleFrom(img, true), cls, false);
     for (let i = 0; i < data.length; i++) idxAllArr[i] = i;
@@ -572,6 +607,7 @@ function addClass(img, color) {
     tc.style.borderColor = color;
     document.getElementById('thumbs').appendChild(tc);
     document.getElementById('epochs').textContent = '0';
+    if (!steps) primeOutputBias();
 }
 
 // ==================== VISUALIZATION (2D overlay on top of GL renders) ====================
@@ -612,6 +648,16 @@ function drawMap() {
     mctx.beginPath(); mctx.moveTo(cx - 11, cy); mctx.lineTo(cx + 11, cy); mctx.moveTo(cx, cy - 11); mctx.lineTo(cx, cy + 11); mctx.stroke();
     mctx.beginPath(); mctx.arc(cx, cy, 7, 0, TAU);
     mctx.strokeStyle = '#b060ff'; mctx.lineWidth = 2.5; mctx.shadowColor = 'rgba(176,96,255,0.9)'; mctx.shadowBlur = 8; mctx.stroke(); mctx.shadowBlur = 0;
+    // live decoded mini-preview riding with the cursor — on phones the big preview is below the fold
+    const ts = 64;
+    let tx = cx + 14, ty = cy - ts - 14;
+    if (tx + ts > MS - 6) tx = cx - ts - 14;
+    if (ty < 6) ty = cy + 14;
+    tx = Math.max(6, Math.min(MS - ts - 6, tx)); ty = Math.max(6, Math.min(MS - ts - 6, ty));
+    const rr = () => { mctx.beginPath(); if (mctx.roundRect) mctx.roundRect(tx, ty, ts, ts, 7); else mctx.rect(tx, ty, ts, ts); };
+    mctx.save(); rr(); mctx.clip();
+    mctx.drawImage(outCv, tx, ty, ts, ts); mctx.restore();
+    rr(); mctx.strokeStyle = '#b060ff'; mctx.lineWidth = 1.5; mctx.stroke();
 }
 function drawOutput() {
     renderOutputGL();
@@ -678,9 +724,9 @@ function loop() {
         if (frame % 2 === 0 || !running) updateDots();
         adaptZR();
         updateMosaic(running ? 1 : 2);
+        drawOutput();                                         // first: outCv fresh for the cursor thumbnail
         renderMosaicGL();
         drawMap();
-        drawOutput();
         drawChart();
         updateStats();
     }
@@ -726,7 +772,7 @@ function syncPlay() { playBtn.textContent = running ? T().pause : T().train; pla
 playBtn.addEventListener('click', () => { running = !running; syncPlay(); });
 syncPlay();
 document.getElementById('reset').addEventListener('click', () => {
-    initNet(); steps = 0; lastLoss = 0; lossHist = []; smoothL = null; histStride = 1; strideCnt = 0; ZR = 1.15;
+    initNet(); primeOutputBias(); steps = 0; lastLoss = 0; lossHist = []; smoothL = null; histStride = 1; strideCnt = 0; ZR = 1.15;
     document.getElementById('params').textContent = countParams().toLocaleString(T().locale);
     updateStats();
 });

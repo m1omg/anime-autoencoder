@@ -61,6 +61,15 @@ If WebGL2 float rendering isn't available the page points you back to the main p
   dragging morphs instead of jumping. Both the noise and the center pull **anneal to 25%**
   as training progresses — kept at full strength forever, they glue each class's augmented
   variants onto a single latent point and the decoder can only paint their blurred average.
+- **Class anchors:** every class is gently pulled toward its own spot on a circle (a disclosed
+  teaching nudge, annealed like the other regularizers), so look-alike characters — the
+  blue-haired trio! — can't pile onto the same latent point. In all three backends.
+- **Mean-image bias init:** the decoder's output bias starts at the logit of the dataset's mean
+  pixel, so the very first reconstructions show the average face instead of gray and Adam skips
+  relearning global brightness.
+- **Cursor thumbnail:** a live decoded mini-preview rides along with the map cursor — on phones
+  the big preview sits below the fold. (These last three ideas were adapted from a GPT-5.6-built
+  sister demo of this same concept.)
 - **Augmentations:** each source image becomes 16 variants (shift / zoom / rotate / mirror),
   so real clusters form in the latent space instead of lonely isolated points.
 - **Eight faces** populate the space, so interpolation traverses a genuinely varied set instead
