@@ -66,6 +66,7 @@
                 <button id="tour">🎬 Tour</button>
             </div>
             <div class="row">
+                <button class="active" id="sharp">✨ Sharpness loss</button>
                 <button id="upload">🖼 Add your own image</button>
                 <input type="file" id="file" accept="image/*" style="display:none">
             </div>
@@ -106,7 +107,7 @@ const STR = {
         &nbsp;<a href="index.html">🐢 CPU (vanilla JS) version</a>
         &nbsp;·&nbsp;<a href="https://m1omg.github.io/neural-oliver/">← Neural network learns Oliver</a>`,
         tData: '🖼 Data', tMap: '🗺 Latent space — drag me!', tDec: '🎨 Decoder paints', tChart: '📉 Loss curve (log)',
-        pause: '⏸ Pause', train: '▶ Train', reset: '⟲ Reset', tour: '🎬 Tour', upload: '🖼 Add your own image',
+        pause: '⏸ Pause', train: '▶ Train', reset: '⟲ Reset', tour: '🎬 Tour', upload: '🖼 Add your own image', sharp: '✨ Sharpness loss',
         lLr: 'Learning rate (Adam)', lBudget: 'Training — ms per frame',
         kStep: 'Step', kEpoch: 'Epoch', kLoss: 'Loss (MSE)', kPsnr: 'PSNR', kParams: 'Parameters', kSps: 'Steps/s',
         hint: `Network: <b>6912 → 256 → 64 → 2 → 64 → 256 → 6912</b> (~3.6M parameters, batch 32), trained
@@ -136,7 +137,7 @@ const STR = {
         &nbsp;<a href="index.html">🐢 CPU (vanilla JS) verzia</a>
         &nbsp;·&nbsp;<a href="https://m1omg.github.io/neural-oliver/">← Neurónka sa učí Olivera</a>`,
         tData: '🖼 Dáta', tMap: '🗺 Latentný priestor — ťahaj!', tDec: '🎨 Dekóder kreslí', tChart: '📉 Priebeh straty (log)',
-        pause: '⏸ Pauza', train: '▶ Trénuj', reset: '⟲ Reset', tour: '🎬 Prehliadka', upload: '🖼 Pridať vlastný obrázok',
+        pause: '⏸ Pauza', train: '▶ Trénuj', reset: '⟲ Reset', tour: '🎬 Prehliadka', upload: '🖼 Pridať vlastný obrázok', sharp: '✨ Ostrostná strata',
         lLr: 'Rýchlosť učenia (Adam)', lBudget: 'Tréning — ms na snímok',
         kStep: 'Krok', kEpoch: 'Epocha', kLoss: 'Strata (MSE)', kPsnr: 'PSNR', kParams: 'Parametre', kSps: 'Krokov/s',
         hint: `Sieť: <b>6912 → 256 → 64 → 2 → 64 → 256 → 6912</b> (~3,6M parametrov, batch 32), trénovaná
@@ -175,6 +176,7 @@ function applyLang() {
     document.getElementById('reset').textContent = t.reset;
     document.getElementById('tour').textContent = t.tour;
     document.getElementById('upload').textContent = t.upload;
+    document.getElementById('sharp').textContent = t.sharp;
     document.getElementById('lang').textContent = t.toggle;
     syncPlay();
     updateStats();
@@ -191,6 +193,8 @@ const SIZES = [D, 256, 64, 2, 64, 256, D];
 const ACTN  = ['relu', 'relu', 'lin', 'relu', 'relu', 'sig'];
 const ACODE = { relu: 0, lin: 1, sig: 2 };
 const LAMBDA = 0.01, WARM = 200;
+const SHARP = 0.7;                                           // weight of the gradient (edge) loss
+let sharpOn = true;
 const BS = Math.min(256, Math.max(1, +(new URLSearchParams(location.search).get('bs')) || 32));
 const NMAX = 192;                                            // 12 classes × 16 samples
 let ZR = 1.15;
@@ -279,10 +283,27 @@ void main(){ivec2 q=ivec2(gl_FragCoord.xy);
 const FS_NOISE = HDR + `uniform sampler2D uA,uN;out vec4 O;
 void main(){ivec2 q=ivec2(gl_FragCoord.xy);
  O=vec4(texelFetch(uA,q,0).r+texelFetch(uN,q,0).r,0.,0.,1.);}`;
-const FS_DOUT = HDR + `uniform sampler2D uOut,uX;out vec4 O;
+// Output-layer delta. Beyond plain pixel MSE this carries the *gradient* (sharpness) loss the
+// CPU engine uses: match the target's horizontal and vertical differences, not just its pixels.
+// Plain MSE is minimised by averaging plausible options, which is precisely why autoencoders
+// blur; the edge term pushes back. Activations are laid out as (pixel*3+channel) along x, so a
+// neighbour one pixel to the right is +3 and one row down is +uImg*3.
+const FS_DOUT = HDR + `uniform sampler2D uOut,uX;uniform int uImg;uniform float uSharp;out vec4 O;
 void main(){ivec2 q=ivec2(gl_FragCoord.xy);
  float o=texelFetch(uOut,q,0).r,x=texelFetch(uX,q,0).r;
- O=vec4((o-x)*o*(1.-o),0.,0.,1.);}`;
+ float g=o-x;
+ if(uSharp>0.){
+  int i=q.x,pix=i/3,px=pix%uImg,py=pix/uImg,S=uImg*3;
+  if(px<uImg-1){float o2=texelFetch(uOut,ivec2(i+3,q.y),0).r,x2=texelFetch(uX,ivec2(i+3,q.y),0).r;
+   g-=uSharp*((o2-o)-(x2-x));}
+  if(px>0){float o2=texelFetch(uOut,ivec2(i-3,q.y),0).r,x2=texelFetch(uX,ivec2(i-3,q.y),0).r;
+   g+=uSharp*((o-o2)-(x-x2));}
+  if(py<uImg-1){float o2=texelFetch(uOut,ivec2(i+S,q.y),0).r,x2=texelFetch(uX,ivec2(i+S,q.y),0).r;
+   g-=uSharp*((o2-o)-(x2-x));}
+  if(py>0){float o2=texelFetch(uOut,ivec2(i-S,q.y),0).r,x2=texelFetch(uX,ivec2(i-S,q.y),0).r;
+   g+=uSharp*((o-o2)-(x-x2));}
+ }
+ O=vec4(g*o*(1.-o),0.,0.,1.);}`;
 const FS_DBACK = HDR + `uniform sampler2D uW,uDel,uA,uLat;uniform int uRows,uAct;uniform float uLambda;out vec4 O;
 void main(){ivec2 q=ivec2(gl_FragCoord.xy);
  float s=0.;
@@ -581,7 +602,10 @@ function trainStep(lr0) {
     fwd(3, TR.A[3], TR.A[4], 0, BS);
     fwd(4, TR.A[4], TR.A[5], 0, BS);
     fwd(5, TR.A[5], TR.A[6], 0, BS);
-    run(pDout, [TR.DEL[5]], D, BS, 0, pr => { bindTx(pr, 'uOut', TR.A[6]); bindTx(pr, 'uX', TR.A[0]); });
+    run(pDout, [TR.DEL[5]], D, BS, 0, pr => {
+        bindTx(pr, 'uOut', TR.A[6]); bindTx(pr, 'uX', TR.A[0]);
+        setI(pr, 'uImg', IMG); setF(pr, 'uSharp', sharpOn ? SHARP : 0);
+    });
     const invB = 1 / BS;
     for (let l = L - 1; l >= 0; l--) {
         const Y = layers[l];
@@ -732,8 +756,37 @@ function selfTest() {
     {
         const O = seq(C * B, i => 0.5 + val(i) / 8), X = seq(C * B, i => 0.5 + val(i + 5) / 8);
         const oT = mk(C, B, O), xT = mk(C, B, X), o = tex(C, B);
-        run(pDout, [o], C, B, 0, pr => { bindTx(pr, 'uOut', oT); bindTx(pr, 'uX', xT); });
-        check('dOut', readR(o), seq(C * B, i => (O[i] - X[i]) * O[i] * (1 - O[i])));
+        run(pDout, [o], C, B, 0, pr => {
+            bindTx(pr, 'uOut', oT); bindTx(pr, 'uX', xT); setI(pr, 'uImg', 1); setF(pr, 'uSharp', 0);
+        });
+        check('dOut (plain MSE)', readR(o), seq(C * B, i => (O[i] - X[i]) * O[i] * (1 - O[i])));
+    }
+    // ---- dOut with the gradient/sharpness term, on a 2x2 RGB image (D = 12)
+    {
+        const IM = 2, DD = IM * IM * 3, sh = 0.7;
+        const O = seq(DD * B, i => 0.5 + val(i) / 8), X = seq(DD * B, i => 0.5 + val(i + 3) / 8);
+        const oT = mk(DD, B, O), xT = mk(DD, B, X), o = tex(DD, B);
+        run(pDout, [o], DD, B, 0, pr => {
+            bindTx(pr, 'uOut', oT); bindTx(pr, 'uX', xT); setI(pr, 'uImg', IM); setF(pr, 'uSharp', sh);
+        });
+        // CPU reference: exactly the loop the vanilla-JS engine runs
+        const want = new Float32Array(DD * B);
+        for (let b = 0; b < B; b++) {
+            const out = O.subarray(b * DD, b * DD + DD), tgt = X.subarray(b * DD, b * DD + DD);
+            const gpx = new Float32Array(DD);
+            for (let i = 0; i < DD; i++) gpx[i] = out[i] - tgt[i];
+            const S = IM * 3;
+            for (let y = 0; y < IM; y++) for (let x = 0; x < IM - 1; x++) for (let c = 0; c < 3; c++) {
+                const i = y * S + x * 3 + c, n = i + 3;
+                const d = sh * ((out[n] - out[i]) - (tgt[n] - tgt[i])); gpx[n] += d; gpx[i] -= d;
+            }
+            for (let y = 0; y < IM - 1; y++) for (let x = 0; x < IM; x++) for (let c = 0; c < 3; c++) {
+                const i = y * S + x * 3 + c, n = i + S;
+                const d = sh * ((out[n] - out[i]) - (tgt[n] - tgt[i])); gpx[n] += d; gpx[i] -= d;
+            }
+            for (let i = 0; i < DD; i++) want[b * DD + i] = gpx[i] * out[i] * (1 - out[i]);
+        }
+        check('dOut (sharpness loss)', readR(o), want);
     }
     // ---- dBack: sum_i W[i][j] Del[b][i], relu-masked, plus lambda*lat
     {
@@ -1053,6 +1106,9 @@ slider('lr', 'lrVal', v => v < 0.001 ? v.toFixed(4) : v.toFixed(3), v => (lr = M
 slider('budget', 'budgetVal', v => '' + v, v => (budget = v, v));
 
 const fileInput = document.getElementById('file');
+document.getElementById('sharp').addEventListener('click', e => {
+    sharpOn = !sharpOn; e.target.classList.toggle('active', sharpOn);
+});
 document.getElementById('upload').addEventListener('click', () => {
     if (classes.length >= 12) { document.getElementById('err').textContent = T().errMax; return; }
     fileInput.click();
