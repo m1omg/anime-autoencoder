@@ -1,0 +1,1523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🌀 Kernel Lab — machine learning without a single gradient step</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌀</text></svg>">
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif; background: #0a0618;
+        color: #efe7ff; min-height: 100vh; padding: 18px; line-height: 1.5; }
+    h1 { font-size: clamp(19px, 4vw, 28px); text-shadow: 0 0 16px rgba(150,90,255,0.7); margin-bottom: 6px; }
+    h2 { font-size: clamp(16px, 3vw, 20px); margin-bottom: 6px; color: #e2d0ff; }
+    a { color: #b060ff; }
+    .sub { opacity: 0.68; font-size: 13.5px; max-width: 900px; margin-bottom: 6px; }
+    .lead { max-width: 900px; font-size: 13.5px; opacity: 0.8; margin-bottom: 18px; }
+    .toc { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 22px; }
+    .toc a { font-size: 12px; text-decoration: none; border: 1px solid rgba(150,90,255,0.35);
+        background: rgba(50,26,90,0.45); border-radius: 999px; padding: 5px 11px; color: #d9c4ff; }
+    .toc a:hover { background: rgba(90,50,150,0.8); }
+    .card { background: rgba(28,14,52,0.7); border: 1px solid rgba(150,90,255,0.28);
+        border-radius: 16px; padding: 16px 18px; box-shadow: 0 0 30px rgba(110,60,200,0.22);
+        margin-bottom: 20px; max-width: 1180px; scroll-margin-top: 12px; }
+    .note { font-size: 13px; opacity: 0.75; max-width: 880px; margin-bottom: 14px; }
+    .hint { font-size: 12.5px; opacity: 0.62; margin-top: 14px; max-width: 900px;
+        border-left: 2px solid rgba(150,90,255,0.35); padding-left: 12px; }
+    .canvases { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; }
+    .cwrap { text-align: center; }
+    .cwrap .t { font-size: 11.5px; opacity: 0.7; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+    canvas { display: block; border-radius: 12px; background: #07040f; max-width: 92vw; height: auto; touch-action: none; }
+    .ctl { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; margin-top: 14px; }
+    .grp { min-width: 190px; }
+    .label { font-size: 11px; opacity: 0.65; margin-bottom: 5px; letter-spacing: 0.4px; text-transform: uppercase; }
+    .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    button { cursor: pointer; border: 1px solid rgba(150,90,255,0.4); background: rgba(50,26,90,0.6);
+        color: #efe7ff; border-radius: 9px; padding: 6px 11px; font-size: 12.5px; transition: 0.12s;
+        font-family: inherit; }
+    button:hover { background: rgba(90,50,150,0.8); }
+    button.active { background: linear-gradient(135deg, #7a40c0, #b060ff); border-color: transparent;
+        box-shadow: 0 0 12px rgba(176,96,255,0.55); }
+    input[type=range] { accent-color: #b060ff; width: 130px; }
+    .val { font: bold 12.5px monospace; color: #d9c4ff; min-width: 58px; }
+    .stats { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    .stat { background: rgba(12,6,26,0.6); border: 1px solid rgba(150,90,255,0.2);
+        border-radius: 9px; padding: 6px 11px; min-width: 96px; }
+    .stat .k { font-size: 10.5px; opacity: 0.6; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat .v { font: bold 15px monospace; color: #7effc0; }
+    code, .mono { font-family: 'Cascadia Code', Consolas, monospace; font-size: 0.94em;
+        background: rgba(12,6,26,0.7); padding: 1px 5px; border-radius: 5px; color: #cbb4ff; }
+    .eq { display: block; text-align: center; margin: 10px 0; font-family: 'Cascadia Code', Consolas, monospace;
+        font-size: 13.5px; color: #c8ffe6; background: rgba(12,6,26,0.55);
+        border: 1px solid rgba(150,90,255,0.18); border-radius: 10px; padding: 9px 12px; overflow-x: auto; }
+    .pink { color: #ff6ba9; } .cyan { color: #6bd5ff; } .grn { color: #7effc0; } .dim { opacity: 0.6; }
+    b.k { color: #ffd479; font-weight: bold; }
+    .warn { color: #ffa060; font-size: 12.5px; margin-top: 8px; }
+    footer { max-width: 1180px; font-size: 12.5px; opacity: 0.55; padding: 6px 0 40px; }
+    @media (max-width: 700px) { body { padding: 12px; } .card { padding: 13px; } }
+</style>
+</head>
+<body>
+
+<h1>🌀 Kernel Lab</h1>
+<div class="sub">Seven live demos of <b>kernel methods</b> — the branch of machine learning that solves problems
+    by <b>replacing the dot product</b>, not by descending a gradient. Everything on this page is written from
+    scratch in vanilla JS (SMO, Cholesky, orthogonal iteration, kernel PCA — no libraries), and every model here
+    is fit <b>in closed form or by convex optimisation</b>: no epochs, no learning rate, no local minima.</div>
+<div class="lead">The sister page on this repo trains a neural autoencoder for minutes to squeeze anime faces into
+    two numbers. <a href="#sprites">The last demo below does the same job with an eigenvector and a linear solve</a>,
+    in about a second. That contrast is the point of this page.
+    &nbsp;<a href="./">← the autoencoder</a> · <a href="https://github.com/m1omg/anime-autoencoder">source</a></div>
+
+<div class="toc">
+    <a href="#trick">① The kernel trick</a>
+    <a href="#svm">② Kernel SVM (SMO)</a>
+    <a href="#gp">③ Kernel ridge &amp; Gaussian processes</a>
+    <a href="#kpca">④ Kernel PCA</a>
+    <a href="#rff">⑤ Random features → neural nets</a>
+    <a href="#attn">⑥ Attention is a kernel</a>
+    <a href="#sprites">⑦ 🌸 Anime faces, no training</a>
+</div>
+
+<!-- ========================= 1. KERNEL TRICK ========================= -->
+<section class="card" id="trick">
+    <h2>① The kernel trick — a straight line in the right space</h2>
+    <p class="note">These two classes are a ring inside a ring: no straight line in 2D can separate them.
+        But send every point through <span class="mono">φ(x,y) = (x², √2·xy, y²)</span> and the problem becomes
+        <i>trivially</i> linear — a flat plane slices the two classes apart. <b>Drag the slider to lift the data;
+        drag the canvas to orbit.</b></p>
+    <div class="canvases">
+        <div class="cwrap"><div class="t">🛸 φ-space (drag to orbit)</div>
+            <canvas id="k1" width="440" height="380"></canvas></div>
+        <div class="grp" style="flex:1; min-width:280px">
+            <div class="label">Lift into feature space</div>
+            <div class="row"><input type="range" id="k1t" min="0" max="1" step="0.005" value="0"><span class="val" id="k1tv">0%</span></div>
+            <div class="row" style="margin-top:8px">
+                <button id="k1auto" class="active">🔄 Auto-orbit</button>
+                <button id="k1plane" class="active">✂ Show plane</button>
+            </div>
+            <p class="note" style="margin-top:14px">The catch: <b>you never actually compute φ</b>. Every algorithm
+                on this page touches the data only through inner products, and</p>
+            <div class="eq">⟨φ(a), φ(b)⟩ = (a·b)² = k(a, b)</div>
+            <p class="note">— the same number, at a fraction of the cost. That identity <i>is</i> the kernel trick.
+                Hover the canvas to check it live, with <span class="mono">a</span> = your cursor and
+                <span class="mono">b</span> = (0.6, −0.35):</p>
+            <div class="stats">
+                <div class="stat"><div class="k">⟨φ(a),φ(b)⟩</div><div class="v" id="k1lhs">—</div></div>
+                <div class="stat"><div class="k">(a·b)²</div><div class="v" id="k1rhs">—</div></div>
+            </div>
+        </div>
+    </div>
+    <p class="hint">The canvas draws φ-space in a <b>rotated orthonormal basis</b> —
+        <span class="mono">(x²−y²)/√2, √2xy, r²/√2</span> — because a rotation leaves every inner product (and so the
+        kernel) exactly unchanged while standing the separating direction <span class="mono">r²</span> upright.
+        The rings become a cone, and the plane that splits them is simply horizontal.<br><br>
+        <b>Why bother?</b> For degree-<i>d</i> polynomials on <i>n</i> inputs, φ has C(n+d−1, d)
+        coordinates. On a 64-pixel patch at degree 8 that is
+        <span class="mono" id="k1dim">…</span> dimensions — more numbers than atoms in a small object — and
+        <span class="mono">(a·b)⁸</span> computes their inner product in 64 multiplies and one <span class="mono">pow</span>.
+        The RBF kernel below goes further: its feature space is <b>infinite-dimensional</b>, and it still costs one
+        <span class="mono">exp</span>.</p>
+</section>
+
+<!-- ========================= 2. SVM ========================= -->
+<section class="card" id="svm">
+    <h2>② Kernel SVM, solved by hand-written SMO</h2>
+    <p class="note"><b>Click the canvas to add points</b> (shift-click or right-click for the other class).
+        The support vector machine is re-solved from scratch on every change with
+        <b>Sequential Minimal Optimisation</b> — Platt's 1998 algorithm, ~120 lines below this page's HTML.
+        It maximises a concave objective under one linear constraint, so it has <b>one</b> optimum and always
+        finds it. Ringed points are the <b>support vectors</b>: the only points the model keeps.</p>
+    <div class="canvases">
+        <div class="cwrap"><div class="t">🎯 Decision surface — click to add points</div>
+            <canvas id="k2" width="430" height="430"></canvas></div>
+        <div class="grp" style="flex:1; min-width:300px">
+            <div class="label">Dataset</div>
+            <div class="row">
+                <button data-ds="xor" class="active">XOR</button><button data-ds="circles">Rings</button>
+                <button data-ds="moons">Moons</button><button data-ds="spiral">Spiral</button>
+                <button data-ds="clear">Empty</button>
+            </div>
+            <div class="label" style="margin-top:12px">Kernel k(a,b)</div>
+            <div class="row">
+                <button data-kern="rbf" class="active">RBF</button><button data-kern="poly">Polynomial</button>
+                <button data-kern="lin">Linear</button><button data-kern="lap">Laplacian</button>
+            </div>
+            <div class="eq" id="k2eq">k(a,b) = exp(−γ‖a−b‖²)</div>
+            <div class="label" id="k2glab">γ (kernel width)</div>
+            <div class="row"><input type="range" id="k2g" min="-1.3" max="2.4" step="0.02" value="0.55"><span class="val" id="k2gv">3.5</span></div>
+            <div class="label">C (slack penalty — low = softer margin)</div>
+            <div class="row"><input type="range" id="k2c" min="-2" max="3" step="0.05" value="0.7"><span class="val" id="k2cv">5.0</span></div>
+            <div class="row" style="margin-top:10px">
+                <button id="k2noise" >🎲 Flip 8% of labels</button>
+                <button id="k2margin" class="active">▦ Show margins</button>
+            </div>
+            <div class="stats">
+                <div class="stat"><div class="k">Points</div><div class="v" id="k2n">0</div></div>
+                <div class="stat"><div class="k">Support vecs</div><div class="v" id="k2sv">0</div></div>
+                <div class="stat"><div class="k">Train acc</div><div class="v" id="k2acc">—</div></div>
+                <div class="stat"><div class="k">Dual obj</div><div class="v" id="k2obj">—</div></div>
+                <div class="stat"><div class="k">SMO passes</div><div class="v" id="k2it">—</div></div>
+                <div class="stat"><div class="k">Solve time</div><div class="v" id="k2ms">—</div></div>
+            </div>
+        </div>
+    </div>
+    <p class="hint">Watch the <b>support-vector count</b> as you drag C down: the margin softens, more points fall
+        inside it, and the model gets <i>heavier</i> but smoother. Crank γ up on the RBF kernel and the boundary
+        shatters into islands around single points — textbook overfitting, visible in real time. Note also what
+        the linear kernel does to XOR: nothing. It cannot, and no amount of C will save it.</p>
+</section>
+
+<!-- ========================= 3. GP ========================= -->
+<section class="card" id="gp">
+    <h2>③ Kernel ridge regression = a Gaussian process</h2>
+    <p class="note"><b>Click to place observations</b> (shift-click to remove the nearest). The curve is the exact
+        posterior mean, the band is ±2σ, and the faint threads are functions <b>sampled</b> from the posterior.
+        There is no fitting loop anywhere — one Cholesky factorisation gives the whole thing:</p>
+    <div class="eq">mean(x⋆) = k⋆ᵀ(K + σ²I)⁻¹ y &nbsp;&nbsp;·&nbsp;&nbsp; var(x⋆) = k(x⋆,x⋆) − k⋆ᵀ(K + σ²I)⁻¹k⋆</div>
+    <div class="canvases">
+        <div class="cwrap"><div class="t">📈 Posterior over functions — click to add data</div>
+            <canvas id="k3" width="700" height="300"></canvas></div>
+        <div class="grp" style="flex:1; min-width:250px">
+            <div class="label">Kernel = your prior belief about the function</div>
+            <div class="row">
+                <button data-k3="rbf" class="active">RBF (smooth)</button><button data-k3="mat">Matérn-3/2 (rough)</button>
+                <button data-k3="per">Periodic</button><button data-k3="lin">Linear</button>
+                <button data-k3="perrbf">Periodic × RBF</button>
+            </div>
+            <div class="label" style="margin-top:12px">Lengthscale ℓ</div>
+            <div class="row"><input type="range" id="k3l" min="-2.3" max="0" step="0.02" value="-1.2"><span class="val" id="k3lv">0.06</span></div>
+            <div class="label">Observation noise σ</div>
+            <div class="row"><input type="range" id="k3n" min="-4" max="-0.5" step="0.05" value="-1.7"><span class="val" id="k3nv">0.02</span></div>
+            <div class="row" style="margin-top:10px">
+                <button id="k3samp" class="active">〰 Samples</button>
+                <button id="k3prior">🌫 Show prior</button>
+                <button id="k3clear">⟲ Clear</button>
+            </div>
+            <div class="stats">
+                <div class="stat"><div class="k">Observations</div><div class="v" id="k3cnt">0</div></div>
+                <div class="stat"><div class="k">Log marg. lik.</div><div class="v" id="k3lml">—</div></div>
+            </div>
+            <p class="note" style="margin-top:12px">The <b>log marginal likelihood</b> is how a GP grades its own
+                hyperparameters — no validation set needed. Try tuning ℓ to maximise it.</p>
+        </div>
+    </div>
+    <p class="hint">Press <b>Show prior</b> with no data and drag the kernel buttons: you are looking at the space of
+        functions the model considers plausible <i>before seeing anything</i>. That is the honest meaning of "choosing
+        a kernel" — it is choosing a prior. Notice how the periodic kernel confidently extrapolates a repeating
+        pattern far past the data, while RBF gives up and reverts to zero the moment it runs out of neighbours.</p>
+</section>
+
+<!-- ========================= 4. KERNEL PCA ========================= -->
+<section class="card" id="kpca">
+    <h2>④ Kernel PCA — unrolling a shape nobody could unroll linearly</h2>
+    <p class="note">Ordinary PCA can only rotate. Kernel PCA takes the eigenvectors of the <b>centred kernel matrix</b>
+        instead of the covariance matrix, which is the same computation performed in φ-space — so it can bend.
+        Watch what happens to concentric rings: linear PCA leaves them nested — hopeless for a linear classifier,
+        because rotating a ring gives you another ring — while kernel PCA pulls them apart into two groups a single
+        straight line can cut.</p>
+    <div class="canvases">
+        <div class="cwrap"><div class="t">🎪 Input space</div><canvas id="k4a" width="270" height="270"></canvas></div>
+        <div class="cwrap"><div class="t">📐 Linear PCA (2 comps)</div><canvas id="k4b" width="270" height="270"></canvas></div>
+        <div class="cwrap"><div class="t">🌀 Kernel PCA (2 comps)</div><canvas id="k4c" width="270" height="270"></canvas></div>
+        <div class="cwrap"><div class="t">📊 Eigen-spectrum</div><canvas id="k4d" width="230" height="270"></canvas></div>
+    </div>
+    <div class="ctl">
+        <div class="grp"><div class="label">Dataset</div><div class="row" id="k4ds">
+            <button data-d="circles" class="active">Rings</button><button data-d="moons">Moons</button>
+            <button data-d="spiral">Spiral</button><button data-d="checker">Checker</button>
+        </div></div>
+        <div class="grp"><div class="label">RBF γ</div><div class="row">
+            <input type="range" id="k4g" min="-1" max="2.2" step="0.02" value="1"><span class="val" id="k4gv">10.0</span>
+        </div></div>
+    </div>
+    <p class="hint">The spectrum panel shows why this works: linear PCA of a ring dataset has two nearly-equal
+        eigenvalues and nowhere to go, while the kernel spectrum has a long informative tail — those extra components
+        are directions in an infinite-dimensional space that simply do not exist in the input.
+        <b class="k">Caveat worth knowing:</b> kernel PCA gives you coordinates but no easy way back —
+        recovering an input from a φ-space point is the <i>pre-image problem</i>, and it has no exact solution.
+        Demo ⑦ works around it.</p>
+</section>
+
+<!-- ========================= 5. RFF ========================= -->
+<section class="card" id="rff">
+    <h2>⑤ Random features — where kernels turn into neural networks</h2>
+    <p class="note">Kernels have one fatal flaw: the matrix is <b>n × n</b>. A million points means a trillion entries.
+        Rahimi &amp; Recht's fix (2007) inverts the trick — instead of avoiding the feature map, <b>approximate it
+        with a short random one</b>. Bochner's theorem says any shift-invariant kernel is the Fourier transform of a
+        probability measure, so sampling <i>D</i> frequencies from it gives:</p>
+    <div class="eq">z(x) = √(2/D)·cos(Wx + b),&nbsp; W ~ 𝒩(0, 2γI),&nbsp; b ~ U[0,2π] &nbsp;⟹&nbsp; z(a)ᵀz(b) ≈ exp(−γ‖a−b‖²)</div>
+    <div class="canvases">
+        <div class="cwrap"><div class="t">🎯 Approximation vs the true kernel</div><canvas id="k5a" width="480" height="270"></canvas></div>
+        <div class="cwrap"><div class="t">📉 Error vs D (log–log)</div><canvas id="k5b" width="330" height="270"></canvas></div>
+    </div>
+    <div class="ctl">
+        <div class="grp"><div class="label">Random features D</div><div class="row">
+            <input type="range" id="k5d" min="0" max="12" step="1" value="4"><span class="val" id="k5dv">16</span></div></div>
+        <div class="grp"><div class="label">γ</div><div class="row">
+            <input type="range" id="k5g" min="-0.5" max="1.5" step="0.02" value="0.3"><span class="val" id="k5gv">2.0</span></div></div>
+        <div class="grp"><div class="label">&nbsp;</div><div class="row"><button id="k5re">🎲 Resample W</button></div></div>
+    </div>
+    <p class="hint">Now read that formula again as an engineer: <span class="mono">cos(Wx + b)</span> with <b>random,
+        never-trained</b> W and b is <b>a one-hidden-layer neural network</b>. Fit a linear model on top and you have
+        a kernel machine. This is the bridge between the two halves of machine learning — and it runs in both
+        directions: an infinitely wide random network has an exactly computable kernel (the <i>neural tangent
+        kernel</i>), which is how a chunk of modern deep-learning theory is done. The error falls like
+        <b>O(1/√D)</b>, the straight line you see in the error panel — Monte Carlo, not magic.</p>
+</section>
+
+<!-- ========================= 6. ATTENTION ========================= -->
+<section class="card" id="attn">
+    <h2>⑥ Attention is kernel smoothing wearing a hat</h2>
+    <p class="note">The operation at the heart of every transformer,
+        <span class="mono">softmax(QKᵀ/√d)·V</span>, is a 1964 statistics result: the
+        <b>Nadaraya–Watson estimator</b>, a weighted average of values whose weights are a kernel evaluated between
+        query and keys. Below, the dots are (key, value) pairs and the curve is what attention returns for every
+        query. <b>Hover to see the attention weights</b> for that query.</p>
+    <div class="canvases">
+        <div class="cwrap"><div class="t">🔍 Attention output — hover to inspect weights</div>
+            <canvas id="k6" width="700" height="300"></canvas></div>
+        <div class="grp" style="flex:1; min-width:250px">
+            <div class="eq" style="text-align:left">out(q) = Σᵢ <span class="pink">wᵢ</span>·vᵢ<br>
+                <span class="pink">wᵢ</span> = softmax(−‖q−kᵢ‖²/τ)</div>
+            <div class="label">Temperature τ (softmax sharpness)</div>
+            <div class="row"><input type="range" id="k6t" min="-4" max="1" step="0.02" value="-2.3"><span class="val" id="k6tv">0.005</span></div>
+            <div class="row" style="margin-top:10px">
+                <button data-k6="gauss" class="active">Gaussian</button>
+                <button data-k6="dot">Dot-product</button>
+                <button id="k6re">🎲 New data</button>
+            </div>
+            <div class="stats">
+                <div class="stat"><div class="k">Keys</div><div class="v" id="k6n">24</div></div>
+                <div class="stat"><div class="k">Eff. keys used</div><div class="v" id="k6eff">—</div></div>
+            </div>
+            <p class="note" style="margin-top:12px"><b>Effective keys</b> is exp(entropy of the weights) — how many
+                keys the query is really looking at. Slide τ from left to right and watch a model go from
+                <b>1-nearest-neighbour lookup</b> (τ→0, a staircase) to <b>the global mean</b> (τ→∞, a flat line),
+                passing through smooth regression in between.</p>
+        </div>
+    </div>
+    <p class="hint">This reframing is not just cute — it is load-bearing. Linear-attention models (Performer,
+        Linear Transformer) are exactly demo ⑤ applied here: replace the softmax kernel with random features
+        <span class="mono">z(q)ᵀz(k)</span>, and attention's cost drops from O(n²) to O(n) because you can now
+        reassociate the matrix product. Every efficient-attention paper is, underneath, a kernel approximation paper.</p>
+</section>
+
+<!-- ========================= 7. SPRITES ========================= -->
+<section class="card" id="sprites">
+    <h2>⑦ 🌸 The same anime latent space — with no training at all</h2>
+    <p class="note">This is the punchline. The <a href="./">main page of this repo</a> trains a neural autoencoder
+        for minutes — Adam, backprop, learning-rate schedules, a bottleneck of 2 numbers — to build a latent map of
+        eight anime faces. Here is that same map, built by <b>kernel PCA</b>: take the RBF kernel matrix of the
+        images, centre it, grab the top 2 eigenvectors. <b>No gradient steps. No epochs.</b> One eigen-solve.</p>
+    <p class="note">Decoding back to pixels is the <i>pre-image problem</i> from demo ④, so we sidestep it with a
+        second closed-form model: <b>kernel ridge regression</b> from the 2D latent code to raw pixels, which is one
+        Cholesky solve. <b>Drag the cursor across the map</b> — the decoder paints whatever lives at that point.</p>
+    <div class="canvases">
+        <div class="cwrap"><div class="t">🗺 Kernel-PCA latent plane — drag!</div><canvas id="k7map" width="380" height="380"></canvas></div>
+        <div class="cwrap"><div class="t">🎨 Kernel ridge decodes</div><canvas id="k7out" width="380" height="380"></canvas></div>
+        <div class="grp" style="flex:1; min-width:250px">
+            <div class="label">Image kernel width γ<sub>img</sub></div>
+            <div class="row"><input type="range" id="k7g" min="-1.5" max="1.5" step="0.05" value="0"><span class="val" id="k7gv">1.00</span></div>
+            <div class="label">Decoder smoothness (ridge λ)</div>
+            <div class="row"><input type="range" id="k7l" min="-5" max="-0.3" step="0.1" value="-2.5"><span class="val" id="k7lv">3e-3</span></div>
+            <div class="label">Decoder locality γ<sub>z</sub> (× neighbour spacing)</div>
+            <div class="row"><input type="range" id="k7gz" min="-1.3" max="1.3" step="0.05" value="0.7"><span class="val" id="k7gzv">5.01</span></div>
+            <div class="row" style="margin-top:10px">
+                <button id="k7tour">🎬 Tour</button><button id="k7redo">⟲ Recompute</button>
+                <button id="k7dots" class="active">● Show samples</button>
+            </div>
+            <div class="stats">
+                <div class="stat"><div class="k">Samples</div><div class="v" id="k7n">—</div></div>
+                <div class="stat"><div class="k">Gram matrix</div><div class="v" id="k7gram">—</div></div>
+                <div class="stat"><div class="k">Eigen-solve</div><div class="v" id="k7eig">—</div></div>
+                <div class="stat"><div class="k">Ridge solve</div><div class="v" id="k7ridge">—</div></div>
+                <div class="stat"><div class="k">Total fit</div><div class="v" id="k7tot">—</div></div>
+                <div class="stat"><div class="k">Variance kept</div><div class="v" id="k7var">—</div></div>
+                <div class="stat"><div class="k">Support at cursor</div><div class="v" id="k7sup">—</div></div>
+            </div>
+            <p class="note" style="margin-top:10px"><b>Support</b> is the total kernel weight the cursor collects
+                from the 128 stored samples. Where it falls to zero the decoder has nothing to go on and can only
+                return the average face — so the map <b>fades to black</b> there instead of inventing detail.
+                That dark region is the honest edge of what this model knows.</p>
+            <div id="k7err" class="warn"></div>
+        </div>
+    </div>
+    <p class="hint"><b>Read the trade honestly.</b> The kernel version fits in a few hundred milliseconds and cannot
+        get stuck — there is no optimiser to get stuck. But it is <b>transductive and O(n²)</b>: it stores every image
+        forever, the Gram matrix grows quadratically, and encoding a genuinely new face means comparing it to all of
+        them. The autoencoder pays minutes up front and gets a compact, reusable <i>function</i> — a few megabytes of
+        weights that encode any image in one forward pass and never look at the training set again. That, in one
+        page, is why deep learning won at scale and why kernels never actually left: below roughly ten thousand
+        samples, the closed form is usually the better engineer's choice.</p>
+</section>
+
+<footer>All demos hand-written in vanilla JavaScript, zero dependencies — SMO, Cholesky, orthogonal iteration,
+    kernel PCA and random Fourier features included. Sister demos:
+    <a href="./">the anime autoencoder</a> · <a href="https://m1omg.github.io/neural-oliver/">neural-oliver</a>.
+    Characters: Klee &amp; Sigewinne (Genshin Impact), Cirno &amp; Flandre Scarlet &amp; Reimu Hakurei (Touhou),
+    Konata Izumi (Lucky Star), Megumin (KonoSuba), Kanna Kamui (Miss Kobayashi's Dragon Maid) — safe-rated fan-art,
+    non-commercial educational use.</footer>
+
+<script>
+'use strict';
+/* ============================================================================
+   Kernel Lab — everything below is written from scratch: no libraries.
+   Shared numeric core first, then one section per demo.
+   ========================================================================= */
+
+// ---------- rng / small helpers ----------
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);
+    t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function gauss(rng){let u=0,v=0;while(u===0)u=rng();while(v===0)v=rng();
+    return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const $=id=>document.getElementById(id);
+const fmt=(v,d)=>Number(v).toFixed(d===undefined?3:d);
+function group(el,attr,cb){ // radio-button group helper
+    el.querySelectorAll('button['+attr+']').forEach(b=>b.addEventListener('click',()=>{
+        el.querySelectorAll('button['+attr+']').forEach(o=>o.classList.remove('active'));
+        b.classList.add('active'); cb(b.getAttribute(attr));
+    }));
+}
+function hidpi(cv){ // crisp canvases on retina without changing the CSS box
+    const r=Math.min(window.devicePixelRatio||1,2);
+    if(r===1||cv._hd)return cv.getContext('2d');
+    const w=cv.width,h=cv.height;
+    cv.style.width=w+'px'; cv.style.height=h+'px';
+    cv.width=Math.round(w*r); cv.height=Math.round(h*r);
+    cv._hd=true; cv._logicalW=w; cv._logicalH=h;
+    const ctx=cv.getContext('2d'); ctx.scale(r,r); return ctx;
+}
+const CW=cv=>cv._logicalW||cv.width, CH=cv=>cv._logicalH||cv.height;
+function pointerXY(cv,e){const r=cv.getBoundingClientRect();
+    return [(e.clientX-r.left)*CW(cv)/r.width,(e.clientY-r.top)*CH(cv)/r.height];}
+
+// ---------- linear algebra ----------
+function chol(A,n){ // lower-triangular Cholesky of a symmetric PD matrix (row-major)
+    const L=new Float64Array(n*n);
+    for(let i=0;i<n;i++)for(let j=0;j<=i;j++){
+        let s=A[i*n+j];
+        for(let k=0;k<j;k++)s-=L[i*n+k]*L[j*n+k];
+        if(i===j)L[i*n+i]=Math.sqrt(Math.max(s,1e-12));
+        else L[i*n+j]=s/L[j*n+j];
+    }
+    return L;
+}
+function cholSolve(L,n,B,m){ // solve (LLᵀ)X = B for X, B row-major n×m
+    const X=Float64Array.from(B);
+    for(let i=0;i<n;i++){const li=i*n,d=L[li+i];
+        for(let c=0;c<m;c++){let s=X[i*m+c];for(let k=0;k<i;k++)s-=L[li+k]*X[k*m+c];X[i*m+c]=s/d;}}
+    for(let i=n-1;i>=0;i--){const d=L[i*n+i];
+        for(let c=0;c<m;c++){let s=X[i*m+c];for(let k=i+1;k<n;k++)s-=L[k*n+i]*X[k*m+c];X[i*m+c]=s/d;}}
+    return X;
+}
+function topEig(S,n,k,iters,seed){ // top-k eigenpairs of symmetric S by orthogonal iteration
+    const rng=mulberry32(seed||7);
+    const V=new Float64Array(n*k),W=new Float64Array(n*k);
+    for(let i=0;i<n*k;i++)V[i]=gauss(rng);
+    const orth=M=>{for(let c=0;c<k;c++){
+        for(let d=0;d<c;d++){let dot=0;for(let i=0;i<n;i++)dot+=M[i*k+c]*M[i*k+d];
+            for(let i=0;i<n;i++)M[i*k+c]-=dot*M[i*k+d];}
+        let nr=0;for(let i=0;i<n;i++)nr+=M[i*k+c]*M[i*k+c];nr=Math.sqrt(nr)||1;
+        for(let i=0;i<n;i++)M[i*k+c]/=nr;}};
+    orth(V);
+    for(let t=0;t<iters;t++){
+        W.fill(0);
+        for(let i=0;i<n;i++){const ro=i*n,oi=i*k;
+            for(let j=0;j<n;j++){const s=S[ro+j];if(s===0)continue;const oj=j*k;
+                for(let c=0;c<k;c++)W[oi+c]+=s*V[oj+c];}}
+        V.set(W);orth(V);
+    }
+    const lam=new Float64Array(k),tmp=new Float64Array(n);
+    for(let c=0;c<k;c++){
+        tmp.fill(0);
+        for(let i=0;i<n;i++){let s=0;const ro=i*n;for(let j=0;j<n;j++)s+=S[ro+j]*V[j*k+c];tmp[i]=s;}
+        let num=0;for(let i=0;i<n;i++)num+=V[i*k+c]*tmp[i];lam[c]=num;
+    }
+    const idx=[...Array(k).keys()].sort((p,q)=>lam[q]-lam[p]);
+    return {lam:idx.map(i=>lam[i]),vec:idx.map(c=>{const v=new Float64Array(n);
+        for(let i=0;i<n;i++)v[i]=V[i*k+c];return v;})};
+}
+function centerGram(K,n){ // K̃ = K − 1ₙK − K1ₙ + 1ₙK1ₙ
+    const rowM=new Float64Array(n);let tot=0;
+    for(let i=0;i<n;i++){let s=0;for(let j=0;j<n;j++)s+=K[i*n+j];rowM[i]=s/n;tot+=s;}
+    tot/=(n*n);
+    const C=new Float64Array(n*n);
+    for(let i=0;i<n;i++)for(let j=0;j<n;j++)C[i*n+j]=K[i*n+j]-rowM[i]-rowM[j]+tot;
+    return C;
+}
+
+/* ============================================================================
+   SMO — Platt's Sequential Minimal Optimisation for the SVM dual.
+   maximise  Σαᵢ − ½ΣΣ αᵢαⱼyᵢyⱼK(xᵢ,xⱼ)   s.t.  0 ≤ αᵢ ≤ C,  Σαᵢyᵢ = 0
+   Concave objective, one linear constraint: a single global optimum.
+   ========================================================================= */
+function smo(K,y,C,maxPasses){
+    const n=y.length,a=new Float64Array(n),E=new Float64Array(n);
+    let b=0;
+    for(let i=0;i<n;i++)E[i]=-y[i];               // f ≡ 0 at α = 0, so E = f − y = −y
+    const tol=1e-3,eps=1e-8;
+
+    function takeStep(i1,i2){
+        if(i1===i2)return 0;
+        const a1=a[i1],a2=a[i2],y1=y[i1],y2=y[i2],E1=E[i1],E2=E[i2],s=y1*y2;
+        let L,H;
+        if(y1!==y2){L=Math.max(0,a2-a1);H=Math.min(C,C+a2-a1);}
+        else{L=Math.max(0,a1+a2-C);H=Math.min(C,a1+a2);}
+        if(H-L<1e-12)return 0;
+        const k11=K[i1*n+i1],k12=K[i1*n+i2],k22=K[i2*n+i2],eta=k11+k22-2*k12;
+        let a2n;
+        if(eta>1e-12){                             // normal case: unconstrained min, then clip
+            a2n=a2+y2*(E1-E2)/eta;
+            if(a2n<L)a2n=L;else if(a2n>H)a2n=H;
+        }else{                                     // degenerate: evaluate objective at both ends
+            const f1=y1*(E1+b)-a1*k11-s*a2*k12, f2=y2*(E2+b)-s*a1*k12-a2*k22;
+            const L1=a1+s*(a2-L),H1=a1+s*(a2-H);
+            const Lo=L1*f1+L*f2+0.5*L1*L1*k11+0.5*L*L*k22+s*L*L1*k12;
+            const Ho=H1*f1+H*f2+0.5*H1*H1*k11+0.5*H*H*k22+s*H*H1*k12;
+            a2n=(Lo<Ho-eps)?L:(Lo>Ho+eps)?H:a2;
+        }
+        if(a2n<1e-10)a2n=0;else if(a2n>C-1e-10)a2n=C;
+        if(Math.abs(a2n-a2)<eps*(a2n+a2+eps))return 0;
+        const a1n=a1+s*(a2-a2n),d1=a1n-a1,d2=a2n-a2;
+        const b1=b-E1-y1*d1*k11-y2*d2*k12, b2=b-E2-y1*d1*k12-y2*d2*k22;
+        const bn=(a1n>eps&&a1n<C-eps)?b1:(a2n>eps&&a2n<C-eps)?b2:(b1+b2)/2;
+        const db=bn-b;
+        for(let k=0;k<n;k++)E[k]+=y1*d1*K[i1*n+k]+y2*d2*K[i2*n+k]+db;  // keep the error cache exact
+        b=bn;a[i1]=a1n;a[i2]=a2n;
+        return 1;
+    }
+    const rng=mulberry32(0x5eed);
+    function examine(i2){
+        const y2=y[i2],a2=a[i2],E2=E[i2],r2=E2*y2;
+        if(!((r2<-tol&&a2<C-eps)||(r2>tol&&a2>eps)))return 0;   // KKT already satisfied
+        let best=-1,bestD=0;                                     // 2nd-choice heuristic: max |E1−E2|
+        for(let i=0;i<n;i++)if(a[i]>eps&&a[i]<C-eps){
+            const d=Math.abs(E[i]-E2);if(d>bestD){bestD=d;best=i;}}
+        if(best>=0&&takeStep(best,i2))return 1;
+        let off=(rng()*n)|0;
+        for(let t=0;t<n;t++){const i=(t+off)%n;if(a[i]>eps&&a[i]<C-eps&&takeStep(i,i2))return 1;}
+        off=(rng()*n)|0;
+        for(let t=0;t<n;t++){const i=(t+off)%n;if(takeStep(i,i2))return 1;}
+        return 0;
+    }
+    let changed=0,examineAll=true,pass=0;
+    while((changed>0||examineAll)&&pass<(maxPasses||200)){
+        changed=0;
+        if(examineAll){for(let i=0;i<n;i++)changed+=examine(i);}
+        else{for(let i=0;i<n;i++)if(a[i]>eps&&a[i]<C-eps)changed+=examine(i);}
+        pass++;
+        if(examineAll)examineAll=false;else if(changed===0)examineAll=true;
+    }
+    let obj=0;
+    for(let i=0;i<n;i++){if(a[i]<=eps)continue;obj+=a[i];
+        for(let j=0;j<n;j++)if(a[j]>eps)obj-=0.5*a[i]*a[j]*y[i]*y[j]*K[i*n+j];}
+    return {a,b,obj,passes:pass};
+}
+
+/* ============================================================================
+   ① THE KERNEL TRICK — lifting a ring into φ-space
+   ========================================================================= */
+(function(){
+    const cv=$('k1'),ctx=hidpi(cv),W=CW(cv),H=CH(cv);
+    const rng=mulberry32(20240);
+    const pts=[];
+    for(let i=0;i<170;i++){
+        const inner=i<80;
+        const r=(inner?0.30:0.78)+gauss(rng)*0.07, th=rng()*Math.PI*2;
+        pts.push({x:r*Math.cos(th),y:r*Math.sin(th),c:inner?1:-1});
+    }
+    const phi=p=>[p.x*p.x,Math.SQRT2*p.x*p.y,p.y*p.y];
+    // The same φ-space, viewed in a rotated orthonormal basis — a rotation leaves every inner
+    // product (and therefore the kernel) untouched, but it stands the separating direction
+    // (x²+y², i.e. r²) upright, so the lift stays legible from any orbit angle.
+    //   u₁ = (x²−y²)/√2 , u₂ = √2xy , u₃ = (x²+y²)/√2 = r²/√2
+    const psi=p=>[(p.x*p.x-p.y*p.y)/Math.SQRT2, Math.SQRT2*p.x*p.y, (p.x*p.x+p.y*p.y)/Math.SQRT2];
+    let yaw=0.7,pitch=0.42,t=0,auto=true,plane=true,drag=null;
+    const CUT=0.52*0.52;                        // the plane r² = 0.52² that separates the rings
+    const HMID=0.24, HSC=2.8, USC=1.75;         // centring / scaling of the lifted cloud
+    const zPlane=()=>t*(CUT/Math.SQRT2-HMID)*HSC;
+
+    function project(P){                        // orthographic camera with yaw/pitch
+        // tilt towards a side-on view as the data lifts, so height (= r², the thing that
+        // separates the classes) turns into screen-y instead of being foreshortened away
+        const pit=pitch+t*0.55;
+        const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pit),sp=Math.sin(pit);
+        const x1=P[0]*cy-P[1]*sy, y1=P[0]*sy+P[1]*cy;
+        const y2=y1*cp-P[2]*sp,   z2=y1*sp+P[2]*cp;
+        const s=115-18*t;
+        return [W/2+x1*s, H/2+y2*s*0.85-t*10, z2];
+    }
+    function coords(p){                         // morph from raw 2D up onto the φ-space cone
+        const u=psi(p);
+        return [(1-t)*p.x*1.15+t*u[0]*USC,
+                (1-t)*p.y*1.15+t*u[1]*USC,
+                t*(u[2]-HMID)*HSC];
+    }
+    function draw(){
+        ctx.clearRect(0,0,W,H);
+        ctx.fillStyle='#07040f';ctx.fillRect(0,0,W,H);
+        // ground grid, for depth
+        ctx.strokeStyle='rgba(150,90,255,0.13)';ctx.lineWidth=1;
+        const gz=-0.55*t-0.02;
+        for(let i=-2;i<=2;i++){
+            const a1=project([i*0.5,-1,gz]),a2=project([i*0.5,1,gz]);
+            const b1=project([-1,i*0.5,gz]),b2=project([1,i*0.5,gz]);
+            ctx.beginPath();ctx.moveTo(a1[0],a1[1]);ctx.lineTo(a2[0],a2[1]);
+            ctx.moveTo(b1[0],b1[1]);ctx.lineTo(b2[0],b2[1]);ctx.stroke();
+        }
+        const items=pts.map(p=>{const P=coords(p),s=project(P);return {p,s};});
+        // separating plane — horizontal in this basis, drawn interleaved by depth
+        let planeQuad=null;
+        if(plane&&t>0.03){
+            const c=zPlane(), q=[], ext=1.0;
+            for(const [u,v] of [[-ext,-ext],[ext,-ext],[ext,ext],[-ext,ext]])q.push(project([u,v,c]));
+            planeQuad={q,depth:q.reduce((s,p)=>s+p[2],0)/4};
+        }
+        const drawPlane=()=>{
+            if(!planeQuad)return;
+            const q=planeQuad.q;
+            ctx.beginPath();ctx.moveTo(q[0][0],q[0][1]);
+            for(let i=1;i<4;i++)ctx.lineTo(q[i][0],q[i][1]);
+            ctx.closePath();
+            const g=ctx.createLinearGradient(q[0][0],q[0][1],q[2][0],q[2][1]);
+            g.addColorStop(0,'rgba(126,255,192,'+(0.10*t)+')');
+            g.addColorStop(1,'rgba(176,96,255,'+(0.16*t)+')');
+            ctx.fillStyle=g;ctx.fill();
+            ctx.strokeStyle='rgba(126,255,192,'+(0.55*t)+')';ctx.lineWidth=1.5;ctx.stroke();
+        };
+        items.sort((A,B)=>A.s[2]-B.s[2]);
+        let planeDrawn=false;
+        for(const it of items){
+            if(planeQuad&&!planeDrawn&&it.s[2]>planeQuad.depth){drawPlane();planeDrawn=true;}
+            const d=(it.s[2]+1.6)/3.2;
+            const r=2.6+1.7*clamp(d,0,1);
+            ctx.beginPath();ctx.arc(it.s[0],it.s[1],r,0,7);
+            ctx.fillStyle=it.p.c>0?'rgba(255,107,169,'+(0.45+0.5*clamp(d,0,1))+')'
+                                  :'rgba(107,213,255,'+(0.45+0.5*clamp(d,0,1))+')';
+            ctx.fill();
+        }
+        if(planeQuad&&!planeDrawn)drawPlane();
+        ctx.fillStyle='rgba(239,231,255,0.55)';ctx.font='11px monospace';
+        ctx.fillText(t<0.02?'input space  (x, y)'
+            :'φ-space, rotated basis  (x²−y², √2xy, r²)/…   lift '+Math.round(t*100)+'%',12,H-12);
+    }
+    $('k1t').addEventListener('input',e=>{t=+e.target.value;$('k1tv').textContent=Math.round(t*100)+'%';});
+    $('k1auto').addEventListener('click',e=>{auto=!auto;e.target.classList.toggle('active',auto);});
+    $('k1plane').addEventListener('click',e=>{plane=!plane;e.target.classList.toggle('active',plane);});
+    cv.addEventListener('pointerdown',e=>{drag=pointerXY(cv,e);cv.setPointerCapture(e.pointerId);});
+    cv.addEventListener('pointerup',()=>{drag=null;});
+    cv.addEventListener('pointermove',e=>{
+        const [mx,my]=pointerXY(cv,e);
+        if(drag){yaw+=(mx-drag[0])*0.01;pitch=clamp(pitch+(my-drag[1])*0.01,-1.3,1.3);drag=[mx,my];}
+        showIdentity({x:clamp((mx-W/2)/115,-1.2,1.2),y:clamp((my-H/2)/115,-1.2,1.2)});
+    });
+    // live check of ⟨φ(a),φ(b)⟩ == (a·b)²: a follows the cursor, b is a fixed reference point
+    function showIdentity(a){
+        const b={x:0.6,y:-0.35},fa=phi(a),fb=phi(b);
+        const dot=a.x*b.x+a.y*b.y;
+        $('k1lhs').textContent=(fa[0]*fb[0]+fa[1]*fb[1]+fa[2]*fb[2]).toFixed(6);
+        $('k1rhs').textContent=(dot*dot).toFixed(6);
+    }
+    showIdentity({x:0.4,y:0.5});
+    // C(n+d−1, d) for n = 64, d = 8 — the dimension you are NOT paying for
+    (function(){let c=1;for(let i=0;i<8;i++)c=c*(64+7-i)/(i+1);
+        $('k1dim').textContent=Math.round(c).toLocaleString('en-US');})();
+    (function loop(){if(auto&&!drag)yaw+=0.004;draw();requestAnimationFrame(loop);})();
+})();
+
+/* ============================================================================
+   ② KERNEL SVM — interactive, re-solved by SMO on every change
+   ========================================================================= */
+(function(){
+    const cv=$('k2'),ctx=hidpi(cv),W=CW(cv),H=CH(cv);
+    const G=120, hm=document.createElement('canvas'); hm.width=hm.height=G;
+    const hctx=hm.getContext('2d'), img=hctx.createImageData(G,G);
+    let pts=[], kern='rbf', param=Math.pow(10,0.55), C=Math.pow(10,0.7), showMargin=true;
+    let model=null, rng=mulberry32(777);
+
+    const toPix=(x,y)=>[(x+1)/2*W,(1-y)/2*H];
+    const toDom=(px,py)=>[px/W*2-1,1-py/H*2];
+
+    function kfun(ax,ay,bx,by){
+        switch(kern){
+            case 'rbf':{const dx=ax-bx,dy=ay-by;return Math.exp(-param*(dx*dx+dy*dy));}
+            case 'lap':{const dx=ax-bx,dy=ay-by;return Math.exp(-param*Math.sqrt(dx*dx+dy*dy));}
+            case 'poly':{const d=ax*bx+ay*by;return Math.pow(d+1,param);}
+            default:return ax*bx+ay*by;
+        }
+    }
+    // ---- datasets ----
+    function make(kind){
+        const P=[];const r=mulberry32(1234);
+        const push=(x,y,c)=>P.push({x:clamp(x,-0.98,0.98),y:clamp(y,-0.98,0.98),c});
+        if(kind==='xor'){
+            for(let i=0;i<120;i++){const q=i%4;
+                push((q&1?0.45:-0.45)+gauss(r)*0.16,(q&2?0.45:-0.45)+gauss(r)*0.16,(q===0||q===3)?1:-1);}
+        }else if(kind==='circles'){
+            for(let i=0;i<60;i++){const th=r()*6.283,rad=0.28+gauss(r)*0.07;
+                push(rad*Math.cos(th),rad*Math.sin(th),1);}
+            for(let i=0;i<90;i++){const th=r()*6.283,rad=0.75+gauss(r)*0.07;
+                push(rad*Math.cos(th),rad*Math.sin(th),-1);}
+        }else if(kind==='moons'){
+            for(let i=0;i<70;i++){const th=Math.PI*r();
+                push(0.6*Math.cos(th)-0.25+gauss(r)*0.07,0.6*Math.sin(th)-0.2+gauss(r)*0.07,1);}
+            for(let i=0;i<70;i++){const th=Math.PI*r();
+                push(0.6*Math.cos(th+Math.PI)+0.25+gauss(r)*0.07,0.6*Math.sin(th+Math.PI)+0.2+gauss(r)*0.07,-1);}
+        }else if(kind==='spiral'){
+            for(let s=0;s<2;s++)for(let i=0;i<75;i++){
+                const t2=1.2+i/75*3.6, rad=t2*0.19, th=t2+s*Math.PI;
+                push(rad*Math.cos(th)+gauss(r)*0.045,rad*Math.sin(th)+gauss(r)*0.045,s?1:-1);}
+        }
+        return P;
+    }
+    // ---- fit ----
+    function fit(){
+        const n=pts.length;
+        if(n<2||!pts.some(p=>p.c>0)||!pts.some(p=>p.c<0)){model=null;draw();stats();return;}
+        const t0=performance.now();
+        const K=new Float64Array(n*n),y=new Float64Array(n);
+        for(let i=0;i<n;i++)y[i]=pts[i].c;
+        for(let i=0;i<n;i++)for(let j=0;j<=i;j++){
+            const v=kfun(pts[i].x,pts[i].y,pts[j].x,pts[j].y);K[i*n+j]=K[j*n+i]=v;}
+        const r=smo(K,y,C,200);
+        // keep only support vectors — that is the whole model
+        const sv=[];
+        for(let i=0;i<n;i++)if(r.a[i]>1e-7)sv.push({x:pts[i].x,y:pts[i].y,w:r.a[i]*y[i],a:r.a[i],i});
+        let correct=0;
+        for(let i=0;i<n;i++){let f=r.b;for(const s of sv)f+=s.w*K[s.i*n+i];
+            pts[i].f=f;if((f>0?1:-1)===y[i])correct++;}
+        model={sv,b:r.b,obj:r.obj,passes:r.passes,acc:correct/n,ms:performance.now()-t0,
+               bound:sv.filter(s=>s.a>C-1e-6).length};
+        draw();stats();
+    }
+    function decide(x,y){ if(!model)return 0; let f=model.b;
+        for(const s of model.sv)f+=s.w*kfun(s.x,s.y,x,y); return f; }
+    // ---- draw ----
+    function draw(){
+        const d=img.data;
+        if(model){
+            for(let gy=0;gy<G;gy++){
+                const y=1-(gy+0.5)/G*2;
+                for(let gx=0;gx<G;gx++){
+                    const x=(gx+0.5)/G*2-1, f=decide(x,y), o=(gy*G+gx)*4;
+                    const m=Math.tanh(Math.abs(f)*0.9), pos=f>0;
+                    let R=pos?255:70, Gc=pos?107:190, B=pos?169:255;
+                    let a=0.10+0.40*m;
+                    // decision boundary and the two margin contours, painted as thin bands
+                    const af=Math.abs(f);
+                    if(af<0.035){R=255;Gc=255;B=255;a=0.85;}
+                    else if(showMargin&&Math.abs(af-1)<0.028){R=235;Gc=225;B=255;a=0.42;}
+                    d[o]=R*a+7*(1-a);d[o+1]=Gc*a+4*(1-a);d[o+2]=B*a+15*(1-a);d[o+3]=255;
+                }
+            }
+        }else{
+            for(let i=0;i<G*G;i++){d[i*4]=7;d[i*4+1]=4;d[i*4+2]=15;d[i*4+3]=255;}
+        }
+        hctx.putImageData(img,0,0);
+        ctx.imageSmoothingEnabled=true;
+        ctx.clearRect(0,0,W,H);
+        ctx.drawImage(hm,0,0,W,H);
+        // points
+        const svset=new Set(model?model.sv.map(s=>s.i):[]);
+        for(let i=0;i<pts.length;i++){
+            const p=pts[i],[px,py]=toPix(p.x,p.y);
+            if(svset.has(i)){
+                ctx.beginPath();ctx.arc(px,py,7.5,0,7);
+                ctx.strokeStyle='rgba(255,255,255,0.85)';ctx.lineWidth=1.6;ctx.stroke();
+            }
+            ctx.beginPath();ctx.arc(px,py,4.2,0,7);
+            ctx.fillStyle=p.c>0?'#ff6ba9':'#6bd5ff';ctx.fill();
+            ctx.strokeStyle='rgba(10,6,24,0.9)';ctx.lineWidth=1.2;ctx.stroke();
+            if(model&&p.f!==undefined&&(p.f>0?1:-1)!==p.c){    // misclassified: little cross
+                ctx.strokeStyle='#ffd479';ctx.lineWidth=1.6;ctx.beginPath();
+                ctx.moveTo(px-4,py-4);ctx.lineTo(px+4,py+4);
+                ctx.moveTo(px+4,py-4);ctx.lineTo(px-4,py+4);ctx.stroke();
+            }
+        }
+        if(!pts.length){
+            ctx.fillStyle='rgba(239,231,255,0.4)';ctx.font='13px "Trebuchet MS", sans-serif';
+            ctx.textAlign='center';
+            ctx.fillText('click to add pink points · shift-click for blue',W/2,H/2);
+            ctx.textAlign='left';
+        }
+    }
+    function stats(){
+        $('k2n').textContent=pts.length;
+        $('k2sv').textContent=model?model.sv.length:0;
+        $('k2acc').textContent=model?(model.acc*100).toFixed(1)+'%':'—';
+        $('k2obj').textContent=model?model.obj.toFixed(2):'—';
+        $('k2it').textContent=model?model.passes:'—';
+        $('k2ms').textContent=model?model.ms.toFixed(1)+'ms':'—';
+    }
+    // ---- controls ----
+    const KEQ={rbf:'k(a,b) = exp(−γ‖a−b‖²)',lap:'k(a,b) = exp(−γ‖a−b‖)',
+               poly:'k(a,b) = (a·b + 1)ᵈ',lin:'k(a,b) = a·b   (no trick at all)'};
+    const slider=$('k2g');
+    function setKernelUI(){
+        $('k2eq').textContent=KEQ[kern];
+        const lab=$('k2glab'),row=slider.parentElement;
+        if(kern==='poly'){
+            lab.textContent='d (polynomial degree)';row.style.opacity=1;slider.disabled=false;
+            slider.min=2;slider.max=9;slider.step=1;
+            if(param<2||param>9||param%1)slider.value=3;
+            param=+slider.value;$('k2gv').textContent=param;
+        }else if(kern==='lin'){
+            lab.textContent='— linear kernel has no width —';row.style.opacity=0.35;slider.disabled=true;
+            $('k2gv').textContent='';
+        }else{
+            lab.textContent='γ (kernel width)';row.style.opacity=1;slider.disabled=false;
+            slider.min=-1.3;slider.max=2.4;slider.step=0.02;
+            if(+slider.value<-1.3||+slider.value>2.4||(+slider.value)%0.02>0.019)slider.value=0.55;
+            param=Math.pow(10,+slider.value);$('k2gv').textContent=fmt(param,2);
+        }
+    }
+    slider.addEventListener('input',e=>{
+        if(kern==='poly'){param=+e.target.value;$('k2gv').textContent=param;}
+        else{param=Math.pow(10,+e.target.value);$('k2gv').textContent=fmt(param,2);}
+        fit();
+    });
+    $('k2c').addEventListener('input',e=>{C=Math.pow(10,+e.target.value);
+        $('k2cv').textContent=fmt(C,2);fit();});
+    group($('svm'),'data-kern',v=>{kern=v;setKernelUI();fit();});
+    group($('svm'),'data-ds',v=>{pts=v==='clear'?[]:make(v);fit();});
+    $('k2noise').addEventListener('click',()=>{
+        for(const p of pts)if(rng()<0.08)p.c=-p.c;fit();});
+    $('k2margin').addEventListener('click',e=>{showMargin=!showMargin;
+        e.target.classList.toggle('active',showMargin);draw();});
+    cv.addEventListener('contextmenu',e=>e.preventDefault());
+    cv.addEventListener('pointerdown',e=>{
+        const [px,py]=pointerXY(cv,e),[x,y]=toDom(px,py);
+        const neg=e.shiftKey||e.button===2||e.ctrlKey;
+        if(e.altKey){   // alt-click removes the nearest point
+            let bi=-1,bd=1e9;
+            pts.forEach((p,i)=>{const d=(p.x-x)**2+(p.y-y)**2;if(d<bd){bd=d;bi=i;}});
+            if(bi>=0&&bd<0.01)pts.splice(bi,1);
+        }else pts.push({x,y,c:neg?-1:1});
+        fit();
+    });
+    setKernelUI();
+    $('k2cv').textContent=fmt(C,2);
+    pts=make('xor');fit();
+})();
+
+/* ============================================================================
+   ③ KERNEL RIDGE / GAUSSIAN PROCESS REGRESSION — exact posterior, one Cholesky
+   ========================================================================= */
+(function(){
+    const cv=$('k3'),ctx=hidpi(cv),W=CW(cv),H=CH(cv);
+    const PAD=26, M=200;
+    const xs=new Float64Array(M);
+    for(let j=0;j<M;j++)xs[j]=j/(M-1);
+    let data=[], kind='rbf', ell=Math.pow(10,-1.2), sn=Math.pow(10,-1.7);
+    let showSamples=true, priorMode=false, post=null;
+
+    const px=x=>PAD+x*(W-2*PAD), py=y=>H/2-y*(H/2-PAD)/1.7;
+    const ix=p=>(p-PAD)/(W-2*PAD), iy=p=>(H/2-p)*1.7/(H/2-PAD);
+
+    function k(a,b){
+        const d=Math.abs(a-b);
+        switch(kind){
+            case 'rbf':return Math.exp(-d*d/(2*ell*ell));
+            case 'mat':{const s=Math.sqrt(3)*d/ell;return (1+s)*Math.exp(-s);}
+            case 'per':{const s=Math.sin(Math.PI*d/0.28);return Math.exp(-2*s*s/(ell*ell*30));}
+            case 'lin':return (a-0.5)*(b-0.5)*3+0.12;
+            case 'perrbf':{const s=Math.sin(Math.PI*d/0.28);
+                return Math.exp(-2*s*s/(ell*ell*30))*Math.exp(-d*d/0.5);}
+        }
+        return 0;
+    }
+    function compute(){
+        const n=priorMode?0:data.length;
+        const mean=new Float64Array(M), sd=new Float64Array(M);
+        let lml=null, samples=[];
+        // prior covariance on the test grid (needed for both branches)
+        const Kss=new Float64Array(M*M);
+        for(let i=0;i<M;i++)for(let j=0;j<=i;j++){const v=k(xs[i],xs[j]);Kss[i*M+j]=Kss[j*M+i]=v;}
+        let cov=Kss;
+        if(n>0){
+            const K=new Float64Array(n*n),yv=new Float64Array(n);
+            for(let i=0;i<n;i++){yv[i]=data[i].y;
+                for(let j=0;j<=i;j++){const v=k(data[i].x,data[j].x);K[i*n+j]=K[j*n+i]=v;}}
+            for(let i=0;i<n;i++)K[i*n+i]+=sn*sn+1e-9;
+            const L=chol(K,n);
+            const alpha=cholSolve(L,n,yv,1);
+            const Ks=new Float64Array(n*M);
+            for(let i=0;i<n;i++)for(let j=0;j<M;j++)Ks[i*M+j]=k(data[i].x,xs[j]);
+            const KiKs=cholSolve(L,n,Ks,M);
+            cov=new Float64Array(M*M);
+            for(let a=0;a<M;a++){
+                let m=0;for(let i=0;i<n;i++)m+=Ks[i*M+a]*alpha[i];
+                mean[a]=m;
+                for(let b2=a;b2<M;b2++){
+                    let s=Kss[a*M+b2];
+                    for(let i=0;i<n;i++)s-=Ks[i*M+a]*KiKs[i*M+b2];
+                    cov[a*M+b2]=cov[b2*M+a]=s;
+                }
+            }
+            // log marginal likelihood: −½yᵀK⁻¹y − Σ log Lᵢᵢ − n/2·log 2π
+            let quad=0,logdet=0;
+            for(let i=0;i<n;i++){quad+=yv[i]*alpha[i];logdet+=Math.log(L[i*n+i]);}
+            lml=-0.5*quad-logdet-0.5*n*Math.log(2*Math.PI);
+        }
+        for(let a=0;a<M;a++)sd[a]=Math.sqrt(Math.max(cov[a*M+a],0));
+        if(showSamples){
+            const J=Float64Array.from(cov);
+            for(let a=0;a<M;a++)J[a*M+a]+=1e-7;
+            const Lc=chol(J,M), rng=mulberry32(4242);
+            for(let s=0;s<4;s++){
+                const e=new Float64Array(M),f=new Float64Array(M);
+                for(let i=0;i<M;i++)e[i]=gauss(rng);
+                for(let i=0;i<M;i++){let acc=0;for(let j=0;j<=i;j++)acc+=Lc[i*M+j]*e[j];
+                    f[i]=mean[i]+acc;}
+                samples.push(f);
+            }
+        }
+        post={mean,sd,samples,lml,n};
+        draw();
+        $('k3cnt').textContent=data.length;
+        $('k3lml').textContent=lml===null?'—':lml.toFixed(2);
+    }
+    function draw(){
+        ctx.clearRect(0,0,W,H);ctx.fillStyle='#07040f';ctx.fillRect(0,0,W,H);
+        ctx.strokeStyle='rgba(150,90,255,0.13)';ctx.lineWidth=1;
+        for(let i=0;i<=10;i++){const X=px(i/10);ctx.beginPath();ctx.moveTo(X,PAD*0.4);ctx.lineTo(X,H-PAD*0.4);ctx.stroke();}
+        for(let v=-1.5;v<=1.5;v+=0.5){const Y=py(v);ctx.beginPath();ctx.moveTo(PAD*0.4,Y);ctx.lineTo(W-PAD*0.4,Y);ctx.stroke();}
+        ctx.strokeStyle='rgba(150,90,255,0.32)';ctx.beginPath();
+        ctx.moveTo(PAD*0.4,py(0));ctx.lineTo(W-PAD*0.4,py(0));ctx.stroke();
+        if(!post)return;
+        const {mean,sd,samples}=post;
+        // ±2σ credible band
+        ctx.beginPath();
+        for(let j=0;j<M;j++){const X=px(xs[j]),Y=py(mean[j]+2*sd[j]);j?ctx.lineTo(X,Y):ctx.moveTo(X,Y);}
+        for(let j=M-1;j>=0;j--)ctx.lineTo(px(xs[j]),py(mean[j]-2*sd[j]));
+        ctx.closePath();ctx.fillStyle='rgba(176,96,255,0.20)';ctx.fill();
+        // posterior samples
+        ctx.lineWidth=1;
+        for(const f of samples){
+            ctx.beginPath();
+            for(let j=0;j<M;j++){const X=px(xs[j]),Y=py(f[j]);j?ctx.lineTo(X,Y):ctx.moveTo(X,Y);}
+            ctx.strokeStyle='rgba(126,255,192,0.30)';ctx.stroke();
+        }
+        // mean
+        ctx.beginPath();
+        for(let j=0;j<M;j++){const X=px(xs[j]),Y=py(mean[j]);j?ctx.lineTo(X,Y):ctx.moveTo(X,Y);}
+        ctx.strokeStyle='#ff6ba9';ctx.lineWidth=2.4;ctx.stroke();
+        // observations
+        if(!priorMode)for(const d of data){
+            ctx.beginPath();ctx.arc(px(d.x),py(d.y),4.6,0,7);
+            ctx.fillStyle='#efe7ff';ctx.fill();
+            ctx.strokeStyle='#0a0618';ctx.lineWidth=1.5;ctx.stroke();
+        }
+        ctx.fillStyle='rgba(239,231,255,0.45)';ctx.font='11px monospace';
+        ctx.fillText(priorMode?'PRIOR — functions the kernel finds plausible before any data'
+                              :(data.length?'POSTERIOR — click to add, shift-click to remove':'click anywhere to add an observation'),PAD,H-8);
+    }
+    $('k3l').addEventListener('input',e=>{ell=Math.pow(10,+e.target.value);
+        $('k3lv').textContent=fmt(ell,3);compute();});
+    $('k3n').addEventListener('input',e=>{sn=Math.pow(10,+e.target.value);
+        $('k3nv').textContent=fmt(sn,4);compute();});
+    group($('gp'),'data-k3',v=>{kind=v;compute();});
+    $('k3samp').addEventListener('click',e=>{showSamples=!showSamples;
+        e.target.classList.toggle('active',showSamples);compute();});
+    $('k3prior').addEventListener('click',e=>{priorMode=!priorMode;
+        e.target.classList.toggle('active',priorMode);compute();});
+    $('k3clear').addEventListener('click',()=>{data=[];compute();});
+    cv.addEventListener('pointerdown',e=>{
+        const [mx,my]=pointerXY(cv,e),x=clamp(ix(mx),0,1),y=clamp(iy(my),-1.7,1.7);
+        if(e.shiftKey){
+            let bi=-1,bd=1e9;data.forEach((d,i)=>{const dd=(d.x-x)**2+(d.y-y)**2;if(dd<bd){bd=dd;bi=i;}});
+            if(bi>=0&&bd<0.02)data.splice(bi,1);
+        }else if(data.length<70)data.push({x,y});
+        compute();
+    });
+    $('k3lv').textContent=fmt(ell,3);$('k3nv').textContent=fmt(sn,4);
+    // a small starting dataset so the page shows something immediately
+    [[0.08,0.55],[0.19,0.95],[0.33,0.2],[0.46,-0.6],[0.58,-0.35],[0.72,0.45],[0.88,0.9]]
+        .forEach(([x,y])=>data.push({x,y}));
+    compute();
+})();
+
+/* ============================================================================
+   ④ KERNEL PCA — eigenvectors of the centred Gram matrix
+   ========================================================================= */
+(function(){
+    const A=$('k4a'),B=$('k4b'),Cc=$('k4c'),D=$('k4d');
+    const ca=hidpi(A),cb=hidpi(B),cc=hidpi(Cc),cd=hidpi(D);
+    let ds='circles', gam=10, X=[], lab=[];
+
+    function make(kind){
+        const r=mulberry32(99);X=[];lab=[];
+        const add=(x,y,c)=>{X.push([x,y]);lab.push(c);};
+        if(kind==='circles'){
+            for(let i=0;i<70;i++){const t=r()*6.283;add(0.32*Math.cos(t)+gauss(r)*0.045,0.32*Math.sin(t)+gauss(r)*0.045,0);}
+            for(let i=0;i<110;i++){const t=r()*6.283;add(0.85*Math.cos(t)+gauss(r)*0.05,0.85*Math.sin(t)+gauss(r)*0.05,1);}
+        }else if(kind==='moons'){
+            for(let i=0;i<90;i++){const t=Math.PI*r();add(0.65*Math.cos(t)-0.28+gauss(r)*0.05,0.65*Math.sin(t)-0.22+gauss(r)*0.05,0);}
+            for(let i=0;i<90;i++){const t=Math.PI*r();add(0.65*Math.cos(t+Math.PI)+0.28+gauss(r)*0.05,0.65*Math.sin(t+Math.PI)+0.22+gauss(r)*0.05,1);}
+        }else if(kind==='spiral'){
+            for(let s=0;s<2;s++)for(let i=0;i<90;i++){
+                const t=1.2+i/90*3.6,rad=t*0.2,th=t+s*Math.PI;
+                add(rad*Math.cos(th)+gauss(r)*0.035,rad*Math.sin(th)+gauss(r)*0.035,s);}
+        }else{
+            for(let i=0;i<180;i++){const x=r()*2-1,y=r()*2-1;
+                add(x,y,((x>0)!==(y>0))?0:1);}
+        }
+    }
+    function eig2(cxx,cxy,cyy){          // closed-form 2×2 symmetric eigendecomposition
+        const tr=cxx+cyy,det=cxx*cyy-cxy*cxy;
+        const disc=Math.sqrt(Math.max(tr*tr/4-det,0));
+        const l1=tr/2+disc,l2=tr/2-disc;
+        const v=(l)=>{let vx=cxy,vy=l-cxx;if(Math.abs(cxy)<1e-12){vx=(cxx>=cyy)?1:0;vy=(cxx>=cyy)?0:1;}
+            const n=Math.hypot(vx,vy)||1;return [vx/n,vy/n];};
+        return {l:[l1,l2],v:[v(l1),v(l2)]};
+    }
+    function scatter(ctx,cv,P,labels,title){
+        const W=CW(cv),H=CH(cv);
+        ctx.clearRect(0,0,W,H);ctx.fillStyle='#07040f';ctx.fillRect(0,0,W,H);
+        let mnx=1e9,mxx=-1e9,mny=1e9,mxy=-1e9;
+        for(const p of P){mnx=Math.min(mnx,p[0]);mxx=Math.max(mxx,p[0]);
+                          mny=Math.min(mny,p[1]);mxy=Math.max(mxy,p[1]);}
+        const sx=(mxx-mnx)||1,sy=(mxy-mny)||1,s=Math.max(sx,sy),pad=22;
+        const cxp=(mnx+mxx)/2,cyp=(mny+mxy)/2;
+        ctx.strokeStyle='rgba(150,90,255,0.12)';
+        for(let i=1;i<4;i++){const t=i/4*(W);ctx.beginPath();ctx.moveTo(t,0);ctx.lineTo(t,H);
+            ctx.moveTo(0,i/4*H);ctx.lineTo(W,i/4*H);ctx.stroke();}
+        for(let i=0;i<P.length;i++){
+            const x=pad+((P[i][0]-cxp)/s+0.5)*(W-2*pad), y=H-pad-((P[i][1]-cyp)/s+0.5)*(H-2*pad);
+            ctx.beginPath();ctx.arc(x,y,3.1,0,7);
+            ctx.fillStyle=labels[i]?'#6bd5ff':'#ff6ba9';ctx.fill();
+        }
+        if(title){ctx.fillStyle='rgba(239,231,255,0.4)';ctx.font='10.5px monospace';ctx.fillText(title,8,H-8);}
+    }
+    function run(){
+        const n=X.length;
+        // ---- linear PCA (a rotation, and nothing more) ----
+        let mx=0,my=0;for(const p of X){mx+=p[0];my+=p[1];}mx/=n;my/=n;
+        let cxx=0,cxy=0,cyy=0;
+        for(const p of X){const a=p[0]-mx,b=p[1]-my;cxx+=a*a;cxy+=a*b;cyy+=b*b;}
+        cxx/=n;cxy/=n;cyy/=n;
+        const e2=eig2(cxx,cxy,cyy);
+        const lin=X.map(p=>{const a=p[0]-mx,b=p[1]-my;
+            return [a*e2.v[0][0]+b*e2.v[0][1], a*e2.v[1][0]+b*e2.v[1][1]];});
+        // ---- kernel PCA ----
+        const K=new Float64Array(n*n);
+        for(let i=0;i<n;i++)for(let j=0;j<=i;j++){
+            const dx=X[i][0]-X[j][0],dy=X[i][1]-X[j][1];
+            const v=Math.exp(-gam*(dx*dx+dy*dy));K[i*n+j]=K[j*n+i]=v;}
+        const Kc=centerGram(K,n);
+        const NC=6, ev=topEig(Kc,n,NC,140,11);
+        // projection of training point j onto component c is √λ_c · v_c[j]
+        const kp=[];
+        for(let j=0;j<n;j++)kp.push([Math.sqrt(Math.max(ev.lam[0],0))*ev.vec[0][j],
+                                     Math.sqrt(Math.max(ev.lam[1],0))*ev.vec[1][j]]);
+        scatter(ca,A,X,lab,'raw (x, y)');
+        scatter(cb,B,lin,lab,'PC1 / PC2');
+        scatter(cc,Cc,kp,lab,'kPC1 / kPC2');
+        // ---- spectrum ----
+        const W=CW(D),H=CH(D);
+        cd.clearRect(0,0,W,H);cd.fillStyle='#07040f';cd.fillRect(0,0,W,H);
+        const linL=[e2.l[0],e2.l[1]],linS=linL[0]+linL[1];
+        const kS=ev.lam.reduce((s,v)=>s+Math.max(v,0),0)||1;
+        cd.fillStyle='rgba(239,231,255,0.6)';cd.font='10.5px monospace';
+        cd.fillText('linear PCA',10,16);cd.fillText('kernel PCA',10,H/2+14);
+        const bar=(x,y,w,h,col)=>{cd.fillStyle=col;cd.fillRect(x,y,w,h);};
+        for(let i=0;i<2;i++){
+            const f=linL[i]/linS,h=f*(H/2-52);
+            bar(24+i*46,H/2-18-h,32,h,'rgba(107,213,255,0.75)');
+            cd.fillStyle='rgba(239,231,255,0.5)';cd.fillText((f*100).toFixed(0)+'%',26+i*46,H/2-6);
+        }
+        for(let i=0;i<NC;i++){
+            const f=Math.max(ev.lam[i],0)/kS,h=f*(H/2-52);
+            bar(16+i*32,H-26-h,22,h,'rgba(255,107,169,0.8)');
+            if(i<2){cd.fillStyle='rgba(239,231,255,0.5)';
+                cd.fillText((f*100).toFixed(0)+'%',16+i*32,H-30-h);}
+        }
+        cd.fillStyle='rgba(239,231,255,0.45)';cd.fillText('components →',16,H-9);
+        // fraction of φ-space variance carried by the first two kernel components
+        cd.fillStyle='rgba(126,255,192,0.85)';cd.textAlign='right';
+        cd.fillText('top-2: '+(((Math.max(ev.lam[0],0)+Math.max(ev.lam[1],0))/kS)*100).toFixed(0)+'%',
+            W-8,H-9);
+        cd.textAlign='left';
+    }
+    group($('k4ds'),'data-d',v=>{ds=v;make(ds);run();});
+    $('k4g').addEventListener('input',e=>{gam=Math.pow(10,+e.target.value);
+        $('k4gv').textContent=fmt(gam,2);run();});
+    $('k4gv').textContent=fmt(gam,2);
+    make(ds);run();
+})();
+
+/* ============================================================================
+   ⑤ RANDOM FOURIER FEATURES — Bochner's theorem, Monte Carlo'd
+   ========================================================================= */
+(function(){
+    const A=$('k5a'),B=$('k5b'),ca=hidpi(A),cb=hidpi(B);
+    let D=16, gam=Math.pow(10,0.3), seed=5;
+    let Wm=null,bm=null;
+
+    function resample(){
+        const rng=mulberry32(seed);
+        const Dmax=4096;
+        Wm=new Float64Array(Dmax);bm=new Float64Array(Dmax);
+        // p(w) for exp(−γ‖x−y‖²) is 𝒩(0, 2γ) in 1D
+        for(let i=0;i<Dmax;i++){Wm[i]=gauss(rng)*Math.sqrt(2*gam);bm[i]=rng()*2*Math.PI;}
+    }
+    const z=(x,d)=>{const out=new Float64Array(d);
+        for(let i=0;i<d;i++)out[i]=Math.cos(Wm[i]*x+bm[i]);return out;};
+    function khat(a,b,d){let s=0;
+        for(let i=0;i<d;i++)s+=Math.cos(Wm[i]*a+bm[i])*Math.cos(Wm[i]*b+bm[i]);
+        return 2*s/d;}
+    function errAt(d){                     // mean |k̂ − k| over a fixed grid of pairs
+        const r=mulberry32(31337);let e=0,cnt=0;
+        for(let t=0;t<140;t++){
+            const a=r()*6-3,b=r()*6-3;
+            e+=Math.abs(khat(a,b,d)-Math.exp(-gam*(a-b)*(a-b)));cnt++;
+        }
+        return e/cnt;
+    }
+    function draw(){
+        const W=CW(A),H=CH(A),PAD=28;
+        ca.clearRect(0,0,W,H);ca.fillStyle='#07040f';ca.fillRect(0,0,W,H);
+        const px=x=>PAD+(x+3)/6*(W-2*PAD), py=y=>H-PAD-(y+0.35)/1.5*(H-2*PAD);
+        ca.strokeStyle='rgba(150,90,255,0.13)';
+        for(let i=-3;i<=3;i++){ca.beginPath();ca.moveTo(px(i),PAD*0.3);ca.lineTo(px(i),H-PAD*0.6);ca.stroke();}
+        for(let v=0;v<=1;v+=0.25){ca.beginPath();ca.moveTo(PAD*0.4,py(v));ca.lineTo(W-PAD*0.4,py(v));ca.stroke();}
+        ca.strokeStyle='rgba(150,90,255,0.3)';ca.beginPath();
+        ca.moveTo(PAD*0.4,py(0));ca.lineTo(W-PAD*0.4,py(0));ca.stroke();
+        // exact kernel
+        ca.beginPath();
+        for(let i=0;i<=300;i++){const x=-3+6*i/300,y=Math.exp(-gam*x*x);
+            i?ca.lineTo(px(x),py(y)):ca.moveTo(px(x),py(y));}
+        ca.strokeStyle='#7effc0';ca.lineWidth=2.4;ca.stroke();
+        // random-feature estimate
+        ca.beginPath();
+        for(let i=0;i<=300;i++){const x=-3+6*i/300,y=khat(x,0,D);
+            i?ca.lineTo(px(x),py(y)):ca.moveTo(px(x),py(y));}
+        ca.strokeStyle='#ff6ba9';ca.lineWidth=1.8;ca.stroke();
+        ca.font='11px monospace';
+        ca.fillStyle='#7effc0';ca.fillText('exact  exp(−γ(x−0)²)',PAD+4,PAD*0.8);
+        ca.fillStyle='#ff6ba9';ca.fillText('z(x)ᵀz(0),  D = '+D,PAD+4,PAD*0.8+15);
+        ca.fillStyle='rgba(239,231,255,0.42)';ca.fillText('x − y',W/2-14,H-8);
+        // ---- error vs D, log–log ----
+        const W2=CW(B),H2=CH(B),P2=34;
+        cb.clearRect(0,0,W2,H2);cb.fillStyle='#07040f';cb.fillRect(0,0,W2,H2);
+        const pts=[];
+        for(let e=1;e<=12;e++){const d=1<<e;pts.push([e,Math.max(errAt(d),1e-4)]);}
+        const lx=e=>P2+(e-1)/11*(W2-P2-14);
+        const ly=v=>{const L=Math.log10(v);return P2*0.5+(( -0.3-L)/2.4)*(H2-P2-10);};
+        cb.strokeStyle='rgba(150,90,255,0.13)';
+        for(let e=1;e<=12;e+=2){cb.beginPath();cb.moveTo(lx(e),8);cb.lineTo(lx(e),H2-P2*0.7);cb.stroke();}
+        for(let L=-0.5;L>=-2.5;L-=0.5){cb.beginPath();cb.moveTo(P2*0.6,ly(Math.pow(10,L)));
+            cb.lineTo(W2-8,ly(Math.pow(10,L)));cb.stroke();}
+        // reference slope −1/2
+        cb.beginPath();cb.setLineDash([4,4]);
+        const ref=e=>pts[0][1]*Math.pow(2,-(e-1)/2);
+        cb.moveTo(lx(1),ly(ref(1)));cb.lineTo(lx(12),ly(ref(12)));
+        cb.strokeStyle='rgba(126,255,192,0.5)';cb.lineWidth=1.4;cb.stroke();cb.setLineDash([]);
+        cb.beginPath();
+        pts.forEach((p,i)=>{i?cb.lineTo(lx(p[0]),ly(p[1])):cb.moveTo(lx(p[0]),ly(p[1]));});
+        cb.strokeStyle='#ff6ba9';cb.lineWidth=2.2;cb.stroke();
+        for(const p of pts){cb.beginPath();cb.arc(lx(p[0]),ly(p[1]),2.6,0,7);
+            cb.fillStyle=(1<<p[0])===D?'#ffd479':'#ff6ba9';cb.fill();}
+        cb.font='10.5px monospace';cb.fillStyle='rgba(239,231,255,0.45)';
+        cb.fillText('D = 2',6,H2-10);cb.fillText('4096',W2-34,H2-10);
+        cb.save();cb.translate(11,H2/2);cb.rotate(-Math.PI/2);
+        cb.fillText('mean |error|',-32,0);cb.restore();
+        // legend in the top-right, the one corner this descending curve never reaches
+        cb.strokeStyle='rgba(126,255,192,0.5)';cb.setLineDash([4,4]);cb.lineWidth=1.4;
+        cb.beginPath();cb.moveTo(W2-92,20);cb.lineTo(W2-72,20);cb.stroke();cb.setLineDash([]);
+        cb.fillStyle='rgba(126,255,192,0.8)';cb.fillText('slope −½',W2-66,24);
+    }
+    $('k5d').addEventListener('input',e=>{D=1<<(+e.target.value+1);$('k5dv').textContent=D;draw();});
+    $('k5g').addEventListener('input',e=>{gam=Math.pow(10,+e.target.value);
+        $('k5gv').textContent=fmt(gam,2);resample();draw();});
+    $('k5re').addEventListener('click',()=>{seed=(seed*7919+13)>>>0;resample();draw();});
+    $('k5dv').textContent=D;$('k5gv').textContent=fmt(gam,2);
+    resample();draw();
+})();
+
+/* ============================================================================
+   ⑥ ATTENTION AS NADARAYA–WATSON KERNEL REGRESSION
+   ========================================================================= */
+(function(){
+    const cv=$('k6'),ctx=hidpi(cv),W=CW(cv),H=CH(cv),PAD=28;
+    let tau=Math.pow(10,-2.3), mode='gauss', seed=3, keys=[], hoverQ=null;
+    const px=x=>PAD+x*(W-2*PAD), py=y=>H-PAD-(y+1.25)/2.5*(H-2*PAD);
+    const ix=p=>(p-PAD)/(W-2*PAD);
+
+    function gen(){
+        const r=mulberry32(seed);keys=[];
+        for(let i=0;i<24;i++){
+            const x=(i+0.5)/24+gauss(r)*0.012;
+            const y=Math.sin(x*7.5)*0.55+Math.sin(x*2.1+1)*0.35+gauss(r)*0.09;
+            keys.push({k:clamp(x,0,1),v:clamp(y,-1.2,1.2)});
+        }
+    }
+    // unit-norm embedding, so the dot-product mode is a genuine softmax(q·k/τ)
+    const emb=x=>[Math.cos(Math.PI*x),Math.sin(Math.PI*x)];
+    function weights(q){
+        const s=new Float64Array(keys.length);
+        for(let i=0;i<keys.length;i++){
+            if(mode==='gauss'){const d=q-keys[i].k;s[i]=-d*d/tau;}
+            else{const a=emb(q),b=emb(keys[i].k);s[i]=(a[0]*b[0]+a[1]*b[1])/tau;}
+        }
+        let m=-1e18;for(const v of s)if(v>m)m=v;
+        let sum=0;for(let i=0;i<s.length;i++){s[i]=Math.exp(s[i]-m);sum+=s[i];}
+        for(let i=0;i<s.length;i++)s[i]/=sum;
+        return s;
+    }
+    const out=q=>{const w=weights(q);let o=0;
+        for(let i=0;i<keys.length;i++)o+=w[i]*keys[i].v;return o;};
+    function effKeys(q){const w=weights(q);let h=0;
+        for(const p of w)if(p>1e-12)h-=p*Math.log(p);return Math.exp(h);}
+
+    function draw(){
+        ctx.clearRect(0,0,W,H);ctx.fillStyle='#07040f';ctx.fillRect(0,0,W,H);
+        ctx.strokeStyle='rgba(150,90,255,0.12)';
+        for(let i=0;i<=10;i++){ctx.beginPath();ctx.moveTo(px(i/10),8);ctx.lineTo(px(i/10),H-PAD*0.6);ctx.stroke();}
+        ctx.strokeStyle='rgba(150,90,255,0.3)';ctx.beginPath();
+        ctx.moveTo(PAD*0.4,py(0));ctx.lineTo(W-PAD*0.4,py(0));ctx.stroke();
+        // attention weights at the hovered query, as bars from the axis
+        if(hoverQ!==null){
+            const w=weights(hoverQ),mx=Math.max(...w);
+            for(let i=0;i<keys.length;i++){
+                const h=w[i]/(mx||1)*(H*0.30);
+                ctx.fillStyle='rgba(255,212,121,'+(0.18+0.6*w[i]/(mx||1))+')';
+                ctx.fillRect(px(keys[i].k)-4,H-PAD*0.6-h,8,h);
+            }
+            ctx.strokeStyle='rgba(255,255,255,0.35)';ctx.setLineDash([3,4]);
+            ctx.beginPath();ctx.moveTo(px(hoverQ),8);ctx.lineTo(px(hoverQ),H-PAD*0.6);
+            ctx.stroke();ctx.setLineDash([]);
+        }
+        // attention output curve
+        ctx.beginPath();
+        for(let i=0;i<=400;i++){const q=i/400;const o=out(q);
+            i?ctx.lineTo(px(q),py(o)):ctx.moveTo(px(q),py(o));}
+        ctx.strokeStyle='#ff6ba9';ctx.lineWidth=2.4;ctx.stroke();
+        // (key, value) pairs
+        for(const k of keys){
+            ctx.beginPath();ctx.arc(px(k.k),py(k.v),4.2,0,7);
+            ctx.fillStyle='#6bd5ff';ctx.fill();
+            ctx.strokeStyle='#0a0618';ctx.lineWidth=1.3;ctx.stroke();
+        }
+        if(hoverQ!==null){
+            const o=out(hoverQ);
+            ctx.beginPath();ctx.arc(px(hoverQ),py(o),6,0,7);
+            ctx.fillStyle='#ffd479';ctx.fill();
+        }
+        ctx.fillStyle='rgba(239,231,255,0.45)';ctx.font='11px monospace';
+        ctx.fillText('keys / values (blue) · attention output (pink) · weights (amber bars)',PAD,H-8);
+        $('k6eff').textContent=(hoverQ===null?effKeys(0.5):effKeys(hoverQ)).toFixed(2);
+    }
+    $('k6t').addEventListener('input',e=>{tau=Math.pow(10,+e.target.value);
+        $('k6tv').textContent=tau<0.01?tau.toExponential(1):fmt(tau,3);draw();});
+    group($('attn'),'data-k6',v=>{mode=v;draw();});
+    $('k6re').addEventListener('click',()=>{seed=(seed*31+7)>>>0;gen();draw();});
+    cv.addEventListener('pointermove',e=>{hoverQ=clamp(ix(pointerXY(cv,e)[0]),0,1);draw();});
+    cv.addEventListener('pointerleave',()=>{hoverQ=null;draw();});
+    $('k6tv').textContent=tau.toExponential(1);
+    gen();draw();
+})();
+
+/* ============================================================================
+   ⑦ ANIME FACES WITHOUT TRAINING
+       latent map  = top-2 eigenvectors of the centred RBF Gram matrix (kernel PCA)
+       decoder     = kernel ridge regression from latent code back to pixels
+   Two closed-form solves. No gradient descent anywhere on this planet.
+   ========================================================================= */
+(function(){
+    const NAMES=['klee','sigewinne','cirno','flandre','reimu','konata','megumin','kanna'];
+    const R=32, P=R*R*3, AUG=16;
+    const map=$('k7map'), out=$('k7out');
+    const mctx=hidpi(map), octx=hidpi(out);
+    const MW=CW(map), MH=CH(map), OW=CW(out), OH=CH(out);
+    let gImg=1, lam=Math.pow(10,-2.5), gZ=Math.pow(10,0.7);
+    let X=null, cls=null, Z=null, alpha=null, mean=null, ready=false, showDots=true;
+    let D2=null, medD2=1, zRef=0.01;            // pairwise squared distances + bandwidth heuristics
+    let cursor=[0,0], tour=null;
+
+    const GRID=14;
+    const mos=document.createElement('canvas'); mos.width=mos.height=GRID*R;
+    const mctx2=mos.getContext('2d');
+    const tile=document.createElement('canvas'); tile.width=tile.height=R;
+    const tctx=tile.getContext('2d'); const timg=tctx.createImageData(R,R);
+    let mosQueue=[], mosPending=false;
+
+    const hue=i=>`hsl(${Math.round(i*360/NAMES.length+18)},85%,66%)`;
+
+    // ---------- 1. load sprites and build an augmented dataset ----------
+    function loadAll(){
+        return Promise.all(NAMES.map(n=>new Promise(res=>{
+            const im=new Image();
+            im.onload=()=>res(im); im.onerror=()=>res(null);
+            im.src='sprites/'+n+'.png';
+        })));
+    }
+    function build(images){
+        const cv=document.createElement('canvas');cv.width=cv.height=R;
+        const c=cv.getContext('2d');
+        const rng=mulberry32(20250810);
+        const vecs=[],labels=[];
+        images.forEach((im,ci)=>{
+            if(!im)return;
+            for(let a=0;a<AUG;a++){
+                c.clearRect(0,0,R,R);c.fillStyle='#fff';c.fillRect(0,0,R,R);
+                c.save();c.translate(R/2,R/2);
+                if(a>0){
+                    c.rotate((rng()*2-1)*0.22);
+                    const s=0.88+rng()*0.28;c.scale(s*(rng()<0.5?-1:1),s);
+                    c.translate((rng()*2-1)*R*0.09,(rng()*2-1)*R*0.09);
+                }
+                c.drawImage(im,-R/2,-R/2,R,R);c.restore();
+                const d=c.getImageData(0,0,R,R).data;
+                const v=new Float64Array(P);
+                for(let p=0;p<R*R;p++){v[p*3]=d[p*4]/255;v[p*3+1]=d[p*4+1]/255;v[p*3+2]=d[p*4+2]/255;}
+                vecs.push(v);labels.push(ci);
+            }
+        });
+        return {vecs,labels};
+    }
+    // ---------- 2. kernel PCA ----------
+    function distances(){                        // computed once; γ then only rescales them
+        const n=X.length;D2=new Float64Array(n*n);
+        for(let i=0;i<n;i++)for(let j=0;j<i;j++){
+            let s=0;const a=X[i],b=X[j];
+            for(let p=0;p<P;p++){const d=a[p]-b[p];s+=d*d;}
+            D2[i*n+j]=D2[j*n+i]=s;
+        }
+        const off=[];
+        for(let i=0;i<n;i++)for(let j=0;j<i;j++)off.push(D2[i*n+j]);
+        off.sort((a,b)=>a-b);
+        medD2=off[off.length>>1]||1;             // median heuristic: γ = 1 is a sane default
+    }
+    function fitLatent(){
+        const n=X.length, t0=performance.now();
+        if(!D2)distances();                      // paid once; γ changes only re-exponentiate
+        const g=gImg/medD2, K=new Float64Array(n*n);
+        for(let i=0;i<n;i++){K[i*n+i]=1;
+            for(let j=0;j<i;j++){const v=Math.exp(-g*D2[i*n+j]);K[i*n+j]=K[j*n+i]=v;}}
+        const tGram=performance.now()-t0;
+        const t1=performance.now();
+        const Kc=centerGram(K,n);
+        const ev=topEig(Kc,n,4,220,17);
+        const tEig=performance.now()-t1;
+        Z=[];
+        for(let i=0;i<n;i++)Z.push([Math.sqrt(Math.max(ev.lam[0],0))*ev.vec[0][i],
+                                    Math.sqrt(Math.max(ev.lam[1],0))*ev.vec[1][i]]);
+        // scale by a robust quantile, not the max: one outlier must not shrink the whole map
+        const mags=Z.map(z=>Math.max(Math.abs(z[0]),Math.abs(z[1]))).sort((a,b)=>a-b);
+        const q=mags[Math.floor(mags.length*0.95)]||mags[mags.length-1]||1;
+        const sc=0.82/q;
+        for(const z of Z){z[0]*=sc;z[1]*=sc;}
+        // decoder bandwidth reference: the 10th-percentile latent spacing, i.e. roughly how far
+        // apart neighbouring samples sit. γz = 1 then means "one neighbour-spacing wide".
+        const zd=[];
+        for(let i=0;i<n;i++)for(let j=0;j<i;j++){
+            const dx=Z[i][0]-Z[j][0],dy=Z[i][1]-Z[j][1];zd.push(dx*dx+dy*dy);}
+        zd.sort((a,b)=>a-b);
+        zRef=zd[Math.floor(zd.length*0.10)]||0.01;
+        // park the cursor on the first class centroid so the decoder shows a face straight away
+        let sx=0,sy=0,m=0;
+        for(let i=0;i<n;i++)if(cls[i]===cls[0]){sx+=Z[i][0];sy+=Z[i][1];m++;}
+        if(m)cursor=[sx/m,sy/m];
+        const tot=ev.lam.reduce((s,v)=>s+Math.max(v,0),0)||1;
+        let all=0;for(let i=0;i<n;i++)all+=Kc[i*n+i];       // trace = total variance in φ-space
+        $('k7gram').textContent=tGram.toFixed(0)+'ms';
+        $('k7eig').textContent=tEig.toFixed(0)+'ms';
+        $('k7var').textContent=(((Math.max(ev.lam[0],0)+Math.max(ev.lam[1],0))/(all||1))*100).toFixed(1)+'%';
+        return tGram+tEig;
+    }
+    // ---------- 3. kernel ridge decoder: latent → pixels ----------
+    function fitDecoder(){
+        const n=X.length, t0=performance.now();
+        const K=new Float64Array(n*n);
+        for(let i=0;i<n;i++)for(let j=0;j<=i;j++){
+            const dx=Z[i][0]-Z[j][0],dy=Z[i][1]-Z[j][1];
+            const v=Math.exp(-(gZ/zRef)*(dx*dx+dy*dy));K[i*n+j]=K[j*n+i]=v;}
+        for(let i=0;i<n;i++)K[i*n+i]+=lam;
+        mean=new Float64Array(P);
+        for(let i=0;i<n;i++)for(let p=0;p<P;p++)mean[p]+=X[i][p];
+        for(let p=0;p<P;p++)mean[p]/=n;
+        const Y=new Float64Array(n*P);
+        for(let i=0;i<n;i++)for(let p=0;p<P;p++)Y[i*P+p]=X[i][p]-mean[p];
+        const L=chol(K,n);
+        alpha=cholSolve(L,n,Y,P);
+        const t=performance.now()-t0;
+        $('k7ridge').textContent=t.toFixed(0)+'ms';
+        return t;
+    }
+    // Returns the decoded image in buf, and reports how much kernel weight the query
+    // actually had nearby — outside the data that sum goes to 0 and the decoder can only
+    // return the mean face, which the map renders as darkness rather than pretending.
+    let support=0;
+    function decode(zx,zy,buf){
+        const n=X.length, g=gZ/zRef;
+        buf.set(mean);support=0;
+        for(let i=0;i<n;i++){
+            const dx=Z[i][0]-zx,dy=Z[i][1]-zy;
+            const w=Math.exp(-g*(dx*dx+dy*dy));
+            support+=w;
+            if(w<1e-6)continue;
+            const o=i*P;
+            for(let p=0;p<P;p++)buf[p]+=w*alpha[o+p];
+        }
+        return buf;
+    }
+    // ---------- rendering ----------
+    const buf=new Float64Array(P);
+    function paintTile(zx,zy,ctxTarget,W,H){
+        decode(zx,zy,buf);
+        const d=timg.data;
+        for(let p=0;p<R*R;p++){
+            d[p*4]=clamp(buf[p*3],0,1)*255;
+            d[p*4+1]=clamp(buf[p*3+1],0,1)*255;
+            d[p*4+2]=clamp(buf[p*3+2],0,1)*255;
+            d[p*4+3]=255;
+        }
+        tctx.putImageData(timg,0,0);
+        ctxTarget.imageSmoothingEnabled=true;
+        ctxTarget.imageSmoothingQuality='high';
+        ctxTarget.drawImage(tile,0,0,W,H);
+    }
+    function queueMosaic(){
+        mosQueue=[];
+        for(let j=0;j<GRID;j++)for(let i=0;i<GRID;i++)mosQueue.push([i,j]);
+        if(!mosPending){mosPending=true;requestAnimationFrame(stepMosaic);}
+    }
+    function stepMosaic(){
+        if(!ready){mosPending=false;return;}
+        for(let t=0;t<6&&mosQueue.length;t++){
+            const [i,j]=mosQueue.shift();
+            const zx=-1+(i+0.5)/GRID*2, zy=1-(j+0.5)/GRID*2;
+            decode(zx,zy,buf);
+            const a=clamp(support/1.5,0,1);      // fade out where no training sample vouches for the pixel
+            const d=timg.data;
+            for(let p=0;p<R*R;p++){
+                d[p*4]=clamp(buf[p*3],0,1)*255*a+7*(1-a);
+                d[p*4+1]=clamp(buf[p*3+1],0,1)*255*a+4*(1-a);
+                d[p*4+2]=clamp(buf[p*3+2],0,1)*255*a+15*(1-a);
+                d[p*4+3]=255;
+            }
+            tctx.putImageData(timg,0,0);
+            mctx2.drawImage(tile,i*R,j*R);
+        }
+        drawMap();
+        if(mosQueue.length)requestAnimationFrame(stepMosaic);
+        else mosPending=false;
+    }
+    function drawMap(){
+        mctx.clearRect(0,0,MW,MH);
+        mctx.imageSmoothingEnabled=true;mctx.imageSmoothingQuality='high';
+        mctx.globalAlpha=0.9;mctx.drawImage(mos,0,0,MW,MH);mctx.globalAlpha=1;
+        mctx.fillStyle='rgba(10,6,24,0.18)';mctx.fillRect(0,0,MW,MH);
+        if(showDots&&Z)for(let i=0;i<Z.length;i++){
+            const x=(Z[i][0]+1)/2*MW, y=(1-Z[i][1])/2*MH;
+            mctx.beginPath();mctx.arc(x,y,i%AUG===0?5:2.6,0,7);
+            mctx.fillStyle=hue(cls[i]);mctx.fill();
+            if(i%AUG===0){mctx.strokeStyle='rgba(10,6,24,0.9)';mctx.lineWidth=1.6;mctx.stroke();}
+        }
+        const cx=(cursor[0]+1)/2*MW, cy=(1-cursor[1])/2*MH;
+        mctx.beginPath();mctx.arc(cx,cy,9,0,7);
+        mctx.strokeStyle='#fff';mctx.lineWidth=2;mctx.stroke();
+        mctx.beginPath();mctx.moveTo(cx-13,cy);mctx.lineTo(cx-4,cy);
+        mctx.moveTo(cx+4,cy);mctx.lineTo(cx+13,cy);
+        mctx.moveTo(cx,cy-13);mctx.lineTo(cx,cy-4);
+        mctx.moveTo(cx,cy+4);mctx.lineTo(cx,cy+13);
+        mctx.strokeStyle='rgba(255,255,255,0.75)';mctx.lineWidth=1.3;mctx.stroke();
+    }
+    function drawOut(){
+        if(!ready)return;
+        paintTile(cursor[0],cursor[1],octx,OW,OH);
+        $('k7sup').textContent=support.toFixed(2);
+    }
+    function refreshAll(){ queueMosaic(); drawOut(); }
+
+    // ---------- controls ----------
+    $('k7g').addEventListener('input',e=>{gImg=Math.pow(10,+e.target.value);
+        $('k7gv').textContent=fmt(gImg,2);if(ready)recompute(true);});
+    $('k7l').addEventListener('input',e=>{lam=Math.pow(10,+e.target.value);
+        $('k7lv').textContent=lam.toExponential(1);if(ready)recompute(false);});
+    $('k7gz').addEventListener('input',e=>{gZ=Math.pow(10,+e.target.value);
+        $('k7gzv').textContent=fmt(gZ,2);if(ready)recompute(false);});
+    $('k7dots').addEventListener('click',e=>{showDots=!showDots;
+        e.target.classList.toggle('active',showDots);drawMap();});
+    $('k7redo').addEventListener('click',()=>{if(ready)recompute(true);});
+    $('k7tour').addEventListener('click',e=>{
+        if(tour){cancelAnimationFrame(tour.raf);tour=null;e.target.classList.remove('active');return;}
+        e.target.classList.add('active');
+        const cent=[];
+        for(let c=0;c<NAMES.length;c++){
+            let sx=0,sy=0,m=0;
+            for(let i=0;i<Z.length;i++)if(cls[i]===c){sx+=Z[i][0];sy+=Z[i][1];m++;}
+            if(m)cent.push([sx/m,sy/m]);
+        }
+        if(cent.length<2){e.target.classList.remove('active');return;}
+        let t=0;
+        const step=()=>{
+            t+=0.006;
+            const seg=Math.floor(t)%cent.length, f=t%1, s=f*f*(3-2*f);
+            const a=cent[seg],b=cent[(seg+1)%cent.length];
+            cursor=[a[0]+(b[0]-a[0])*s,a[1]+(b[1]-a[1])*s];
+            drawMap();drawOut();
+            tour={raf:requestAnimationFrame(step)};
+        };
+        tour={raf:requestAnimationFrame(step)};
+    });
+    let dragging=false;
+    const grab=(e,snap)=>{
+        const [mx,my]=pointerXY(map,e);
+        let z=[clamp(mx/MW*2-1,-1,1),clamp(1-my/MH*2,-1,1)];
+        if(snap&&Z){                       // clicking a sample dot jumps exactly onto it
+            let bi=-1,bd=1e9;
+            for(let i=0;i<Z.length;i++){
+                const d=(Z[i][0]-z[0])**2+(Z[i][1]-z[1])**2;
+                if(d<bd){bd=d;bi=i;}
+            }
+            const px2=(2*11/MW)**2;        // ≈ 11 px, in latent units
+            if(bi>=0&&bd<px2)z=[Z[bi][0],Z[bi][1]];
+        }
+        cursor=z;drawMap();drawOut();
+    };
+    map.addEventListener('pointerdown',e=>{dragging=true;map.setPointerCapture(e.pointerId);grab(e,true);});
+    map.addEventListener('pointermove',e=>{if(dragging)grab(e);});
+    map.addEventListener('pointerup',()=>{dragging=false;});
+    map.style.cursor='crosshair';
+
+    function recompute(full){
+        const t0=performance.now();
+        if(full)fitLatent();
+        fitDecoder();
+        $('k7tot').textContent=(performance.now()-t0).toFixed(0)+'ms';
+        refreshAll();
+    }
+    // ---------- go ----------
+    $('k7gv').textContent=fmt(gImg,2);
+    $('k7lv').textContent=lam.toExponential(1);
+    $('k7gzv').textContent=fmt(gZ,2);
+    mctx.fillStyle='#07040f';mctx.fillRect(0,0,MW,MH);
+    octx.fillStyle='#07040f';octx.fillRect(0,0,OW,OH);
+    mctx.fillStyle='rgba(239,231,255,0.5)';mctx.font='12px monospace';
+    mctx.fillText('loading sprites…',18,MH/2);
+    loadAll().then(images=>{
+        if(!images.some(Boolean)){
+            $('k7err').textContent='Could not load sprites/*.png. Serve this page over HTTP '+
+                '(python3 -m http.server) — browsers block pixel reads from file:// URLs.';
+            return;
+        }
+        let built;
+        try{ built=build(images); }
+        catch(err){
+            $('k7err').textContent='Canvas pixel read blocked ('+err.name+'). Serve over HTTP: '+
+                'python3 -m http.server, then open http://localhost:8000/kernel.html';
+            return;
+        }
+        X=built.vecs;cls=built.labels;
+        $('k7n').textContent=X.length+' ('+NAMES.length+'×'+AUG+')';
+        ready=true;
+        recompute(true);
+    });
+})();
+</script>
+</body>
+</html>
