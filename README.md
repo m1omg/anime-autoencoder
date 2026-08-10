@@ -26,6 +26,40 @@ GPU-only, it spends the headroom on quality:
 
 If WebGL2 float rendering isn't available the page points you back to the main page.
 
+## 🌀 Kernel Lab — the same problem, without a single gradient step
+[`kernel.html`](https://m1omg.github.io/anime-autoencoder/kernel.html) is a companion page about the *other*
+half of machine learning: **kernel methods**, which solve problems by replacing the dot product rather than by
+descending a gradient. Same rules as everything else here — vanilla JS, zero dependencies, all the numerics
+hand-written (SMO, Cholesky, orthogonal iteration, kernel PCA, random Fourier features). Seven live demos:
+
+1. **The kernel trick** — a ring-inside-a-ring lifted through `φ(x,y) = (x², √2xy, y²)` until a flat plane
+   separates it, with the identity `⟨φ(a),φ(b)⟩ = (a·b)²` checked against live numbers as you hover. (The canvas
+   draws φ-space in a rotated orthonormal basis, which leaves every inner product untouched but stands the
+   separating direction `r²` upright, so the lift stays readable from any orbit angle.)
+2. **Kernel SVM** — click to add points; the dual is re-solved from scratch by **Platt's SMO** on every change
+   (~10 ms for 150 points). Decision surface, margin contours and support vectors drawn live. Four kernels,
+   plus C and γ sliders, so overfitting is something you can watch happen.
+3. **Kernel ridge = a Gaussian process** — click to place observations and get the exact posterior mean, a ±2σ
+   band and sampled functions from one Cholesky factorisation. A **Show prior** toggle makes the real point
+   visible: choosing a kernel *is* choosing a prior over functions.
+4. **Kernel PCA** — concentric rings that linear PCA can only rotate, pulled apart into linearly separable
+   groups, side by side with the linear projection and both eigen-spectra.
+5. **Random Fourier features** — Bochner's theorem, Monte Carlo'd: `z(x) = √(2/D)·cos(Wx + b)` with random,
+   *never-trained* weights is a one-hidden-layer network whose inner products approximate the RBF kernel, with
+   the O(1/√D) error curve to prove it. This is the bridge between kernels and neural nets.
+6. **Attention is a kernel** — `softmax(QKᵀ/√d)·V` is the 1964 **Nadaraya–Watson estimator**. Slide the
+   temperature and watch a model travel from 1-nearest-neighbour lookup to the global mean.
+7. **🌸 The same anime latent space, with no training at all** — the punchline. The eight sprites from the main
+   page get a 2D latent map from **kernel PCA** (top 2 eigenvectors of the centred Gram matrix) and a decoder
+   from **kernel ridge regression** (one Cholesky solve). Drag the cursor and it paints faces, exactly like the
+   autoencoder — except the whole fit takes ~300 ms instead of minutes, and cannot get stuck, because there is
+   no optimiser to get stuck. The map **fades to black** wherever no training sample supports the query, so you
+   can see the edge of what the model actually knows.
+
+The honest scoreboard is in demo ⑦: the kernel version is closed-form and instant, but **transductive and
+O(n²)** — it keeps every training image forever. The autoencoder pays minutes up front and gets a compact,
+reusable function. That trade, not accuracy, is why deep learning won at scale and why kernels never left.
+
 ## How it works
 - **Architecture:** `N → 128 → 32 → 2 → 32 → 128 → N` where `N = width·height·3`
   (default 64×64 RGB = 12,288, selectable 48 / 64 / 96), ReLU hidden layers, sigmoid output,
