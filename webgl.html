@@ -263,12 +263,21 @@ const escHtml = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt
 // enabled: attribute-less draws are legal but are a known sore spot on native (non-ANGLE)
 // GL drivers, which is exactly the path Firefox takes on Linux.
 const VS = `#version 300 es
+precision highp float;
 layout(location=0) in vec2 aPos;
 void main(){gl_Position=vec4(aPos,0.,1.);}`;
 const TRI = new Float32Array([-1, -1, 3, -1, -1, 3]);
+// GLSL ES 3.00 gives fragment-shader samplers a LOW default precision, and `precision highp
+// float` does not cover them — sampler precision must be stated separately. Drivers that
+// ignore precision qualifiers (desktop GL, which is what Firefox uses on Linux) compute
+// everything at fp32 and look fine; a real OpenGL ES driver honours the default and returns
+// every texelFetch at half precision, so weights, activations and Adam moments all arrive
+// with a 10-bit mantissa and training diverges instead of converging. Every value in this
+// engine lives in a texture, so this one line is load-bearing.
 const HDR = `#version 300 es
 precision highp float;
 precision highp int;
+precision highp sampler2D;
 `;
 const FS_GATHER = HDR + `uniform sampler2D uData,uIdx;out vec4 O;
 void main(){ivec2 q=ivec2(gl_FragCoord.xy);
@@ -726,10 +735,26 @@ function selfTest() {
             const d = Math.abs(got[i] - want[i]);
             if (d > err) { err = d; at = i; }
         }
-        const tol = 1e-4;
+        const tol = 1e-5;    // fp32 lands near 1e-7; half-precision reads land near 1e-4
         rows.push({ name, err, ok: err <= tol && isFinite(err), at, got: got[at], want: want[at] });
     }
 
+    // ---- how many mantissa bits actually survive a texture round-trip?
+    //      This is the check that names a half-precision driver outright, instead of leaving
+    //      it to be inferred from a dozen slightly-wrong numbers downstream.
+    {
+        const probe = new Float32Array([1 + 1 / 3, 1 + 1 / 6, 1 + 1 / 7, 6911, 0.1, 12345.678]);
+        const got = readR(mk(probe.length, 1, probe));
+        let worst = 0;
+        for (let i = 0; i < probe.length; i++)
+            worst = Math.max(worst, Math.abs(got[i] - probe[i]) / Math.abs(probe[i]));
+        const bits = worst > 0 ? Math.floor(-Math.log2(worst)) : 24;
+        rows.push({
+            name: 'float texture precision', err: bits >= 20 ? 0 : 1, ok: bits >= 20,
+            note: '~' + bits + ' mantissa bits kept' +
+                (bits >= 20 ? ' (fp32, correct)' : ' — driver is sampling at HALF precision (fp32 = 23)')
+        });
+    }
     // ---- gather: O[b][x] = data[idx[b]][x]
     {
         const NT = 6, data = seq(C * NT, val), idx = new Float32Array([3, 0, 5, 1]);
