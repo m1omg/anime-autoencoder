@@ -92,7 +92,7 @@
             <div class="row" style="margin-top:2px"><span id="modeStatus" style="font-size:11px; opacity:0.7"></span></div>
 
             <div class="label">Tréning — ms na snímok</div>
-            <div class="row"><input type="range" id="budget" min="5" max="50" step="1" value="22"><span class="val" id="budgetVal">22</span></div>
+            <div class="row"><input type="range" id="budget" min="5" max="50" step="1" value="50"><span class="val" id="budgetVal">50</span></div>
 
             <div class="stats">
                 <div class="stat"><div class="k">Krok</div><div class="v" id="epoch">0</div></div>
@@ -382,7 +382,7 @@ const WORKER_SRC = `'use strict';
 let SIZES,IMG,D,IMG3,L,ACTN,LAMBDA=0.01,WARM=200;
 let W=[],B=[],mW=[],vW=[],mB=[],vB=[],gW=[],gB=[],A=[],Zb=[],DEL=[],tAdam=0,gpx=null;
 const latClean=new Float32Array(2);
-let flat=null,N=0,dim=0,lr=0.002,BS=5,SHARP=0.7,sharpOn=true,noise=0.03,budget=22,running=false;
+let flat=null,N=0,dim=0,lr=0.002,BS=5,SHARP=0.7,sharpOn=true,noise=0.03,budget=50,running=false;
 let steps=0,lastLoss=0,looping=false,lastPostT=0,postAcc=0;
 const TAU=Math.PI*2;
 function randn(){let u=0,v=0;while(!u)u=Math.random();while(!v)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(TAU*v);}
@@ -913,7 +913,7 @@ function drawChart() {
 }
 
 // ==================== STAV + SLUČKA ====================
-let running = true, lr = 0.002, budget = 22, steps = 0, lastLoss = 0;
+let running = true, lr = 0.002, budget = 50, steps = 0, lastLoss = 0;
 let spsN = 0, spsT = performance.now(), sps = 0, lastCfgSync = 0;
 function countParams() { let p = 0; for (let l = 0; l < L; l++) p += W[l].length + B[l].length; return p; }
 function updateStats() {
