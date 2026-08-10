@@ -122,6 +122,7 @@ const STR = {
         errGL: '⚠ The GPU trainer could not start — <a href="index.html">open the CPU version</a> instead.',
         errWhy: 'Reason:',
         errDetails: 'Technical details (please include these when reporting a bug)',
+        errPass: 'This GPU driver executes one or more of the compute passes incorrectly — the trainer will not converge here. Details below.',
         errLost: '⚠ The WebGL context was lost (GPU reset, driver crash, or the tab was backgrounded too long). Reload to try again.'
     },
     sk: {
@@ -151,6 +152,7 @@ const STR = {
         errGL: '⚠ GPU tréner sa nepodarilo spustiť — <a href="index.html">otvor CPU verziu</a>.',
         errWhy: 'Dôvod:',
         errDetails: 'Technické detaily (prilož ich prosím pri hlásení chyby)',
+        errPass: 'Tento ovládač GPU vykonáva niektorý z výpočtových priechodov nesprávne — tréning tu nebude konvergovať. Detaily nižšie.',
         errLost: '⚠ WebGL kontext sa stratil (reset GPU, pád ovládača, alebo bola karta dlho na pozadí). Obnov stránku.'
     }
 };
@@ -346,8 +348,13 @@ void main(){
    col+=wx*vec3(px3(p,0),px3(p,1),px3(p,2));}}
  O=vec4(clamp(col,0.,1.),1.);}`;
 
+// Staging shader: R32F textures cannot be read back portably, so results are copied into an
+// RGBA32F target first (the one float format readPixels is guaranteed to support).
+const FS_READ = HDR + `uniform sampler2D uSrc;out vec4 O;
+void main(){O=vec4(texelFetch(uSrc,ivec2(gl_FragCoord.xy),0).r,0.,0.,1.);}`;
+
 let FBO, lastN = 0, unit = 0, DRAWBUFS;
-let pGather, pFwd, pNoise, pDout, pDback, pGradW, pGradB, pAdam, pLoss, pPack, pMosaic, pOutview;
+let pGather, pFwd, pNoise, pDout, pDback, pGradW, pGradB, pAdam, pLoss, pPack, pMosaic, pOutview, pRead;
 function compile(type, src, name) {
     const s = gl.createShader(type);
     gl.shaderSource(s, src); gl.compileShader(s);
@@ -488,7 +495,8 @@ function initGL() {
     pDout = prog(FS_DOUT, 'dOut'); pDback = prog(FS_DBACK, 'dBack'); pGradW = prog(FS_GRADW, 'gradW');
     pGradB = prog(FS_GRADB, 'gradB'); pAdam = prog(FS_ADAM, 'adam'); pLoss = prog(FS_LOSS, 'loss');
     pPack = prog(FS_PACK, 'pack'); pMosaic = prog(FS_MOSAIC, 'mosaic'); pOutview = prog(FS_OUTVIEW, 'outview');
-    diag('shaders', '12 programs compiled + linked');
+    pRead = prog(FS_READ, 'read');
+    diag('shaders', '13 programs compiled + linked');
 
     for (let l = 0; l < L; l++) {
         const rows = SIZES[l + 1], cols = SIZES[l];
@@ -666,6 +674,167 @@ function renderOutputGL() {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 function countParams() { let p = 0; for (let l = 0; l < L; l++) p += SIZES[l] * SIZES[l + 1] + SIZES[l + 1]; return p; }
+
+// ==================== SELF-TEST ====================
+// Runs every compute pass on tiny inputs and checks it against a CPU reference written
+// straight from the maths. A driver that quietly mis-executes one pass (which is what a
+// flat loss curve on an otherwise healthy GPU looks like) gets caught and named here.
+// Enable with ?selftest=1.
+function selfTest() {
+    const C = 5, R = 3, B = 4;                       // cols, rows, batch — deliberately not powers of 2
+    const rows = [];
+    const mk = (w, h, arr, fmt) => { const t = tex(w, h); if (arr) upload(t, 0, 0, w, h, arr, fmt); return t; };
+    const seq = (n, f) => { const a = new Float32Array(n); for (let i = 0; i < n; i++) a[i] = f(i); return a; };
+    // deterministic, mixed-sign, non-trivial values
+    const val = i => ((i * 37 % 19) - 9) / 6;
+
+    function readR(tx) {                              // R32F -> RGBA32F staging -> readPixels
+        const stage = tex(tx.w, tx.h, gl.RGBA32F);
+        run(pRead, [stage], tx.w, tx.h, 0, pr => bindTx(pr, 'uSrc', tx));
+        const buf = new Float32Array(tx.w * tx.h * 4);
+        gl.readPixels(0, 0, tx.w, tx.h, gl.RGBA, gl.FLOAT, buf);
+        gl.deleteTexture(stage.t);
+        return seq(tx.w * tx.h, i => buf[i * 4]);
+    }
+    function check(name, got, want) {
+        let err = 0, at = -1;
+        for (let i = 0; i < want.length; i++) {
+            const d = Math.abs(got[i] - want[i]);
+            if (d > err) { err = d; at = i; }
+        }
+        const tol = 1e-4;
+        rows.push({ name, err, ok: err <= tol && isFinite(err), at, got: got[at], want: want[at] });
+    }
+
+    // ---- gather: O[b][x] = data[idx[b]][x]
+    {
+        const NT = 6, data = seq(C * NT, val), idx = new Float32Array([3, 0, 5, 1]);
+        const dT = mk(C, NT, data), iT = mk(B, 1, idx), o = tex(C, B);
+        run(pGather, [o], C, B, 0, pr => { bindTx(pr, 'uData', dT); bindTx(pr, 'uIdx', iT); });
+        check('gather', readR(o), seq(C * B, k => data[idx[(k / C) | 0] * C + (k % C)]));
+    }
+    // ---- forward: O[b][i] = act(B[i] + sum_j W[i][j] A[b][j]), for each activation
+    for (const [act, name, f] of [[0, 'forward relu', s => Math.max(s, 0)], [1, 'forward linear', s => s],
+                                  [2, 'forward sigmoid', s => 1 / (1 + Math.exp(-s))]]) {
+        const W = seq(R * C, val), bs = seq(R, i => (i - 1) / 4), A = seq(B * C, i => val(i + 3));
+        const wT = mk(C, R, W), bT = mk(R, 1, bs), aT = mk(C, B, A), o = tex(R, B);
+        run(pFwd, [o], R, B, 0, pr => {
+            bindTx(pr, 'uW', wT); bindTx(pr, 'uB', bT); bindTx(pr, 'uA', aT);
+            setI(pr, 'uCols', C); setI(pr, 'uAct', act);
+        });
+        check(name, readR(o), seq(R * B, k => {
+            const b = (k / R) | 0, i = k % R;
+            let s = bs[i]; for (let j = 0; j < C; j++) s += W[i * C + j] * A[b * C + j];
+            return f(s);
+        }));
+    }
+    // ---- dOut: (o-x)*o*(1-o)
+    {
+        const O = seq(C * B, i => 0.5 + val(i) / 8), X = seq(C * B, i => 0.5 + val(i + 5) / 8);
+        const oT = mk(C, B, O), xT = mk(C, B, X), o = tex(C, B);
+        run(pDout, [o], C, B, 0, pr => { bindTx(pr, 'uOut', oT); bindTx(pr, 'uX', xT); });
+        check('dOut', readR(o), seq(C * B, i => (O[i] - X[i]) * O[i] * (1 - O[i])));
+    }
+    // ---- dBack: sum_i W[i][j] Del[b][i], relu-masked, plus lambda*lat
+    {
+        const W = seq(R * C, val), Del = seq(B * R, i => val(i + 2)), A = seq(B * C, i => val(i + 7));
+        const Lat = seq(B * C, i => val(i + 11)), lam = 0.25;
+        const wT = mk(C, R, W), dT = mk(R, B, Del), aT = mk(C, B, A), lT = mk(C, B, Lat), o = tex(C, B);
+        run(pDback, [o], C, B, 0, pr => {
+            bindTx(pr, 'uW', wT); bindTx(pr, 'uDel', dT); bindTx(pr, 'uA', aT); bindTx(pr, 'uLat', lT);
+            setI(pr, 'uRows', R); setI(pr, 'uAct', 0); setF(pr, 'uLambda', lam);
+        });
+        check('dBack', readR(o), seq(C * B, k => {
+            const b = (k / C) | 0, j = k % C;
+            let s = 0; for (let i = 0; i < R; i++) s += W[i * C + j] * Del[b * R + i];
+            if (A[b * C + j] <= 0) s = 0;
+            return s + lam * Lat[b * C + j];
+        }));
+    }
+    // ---- gradW / gradB
+    {
+        const Del = seq(B * R, val), A = seq(B * C, i => val(i + 4)), invB = 1 / B;
+        const dT = mk(R, B, Del), aT = mk(C, B, A), gw = tex(C, R), gb = tex(R, 1);
+        run(pGradW, [gw], C, R, 0, pr => {
+            bindTx(pr, 'uDel', dT); bindTx(pr, 'uA', aT); setI(pr, 'uBatch', B); setF(pr, 'uInvB', invB);
+        });
+        check('gradW', readR(gw), seq(C * R, k => {
+            const i = (k / C) | 0, j = k % C;
+            let s = 0; for (let b = 0; b < B; b++) s += Del[b * R + i] * A[b * C + j];
+            return s * invB;
+        }));
+        run(pGradB, [gb], R, 1, 0, pr => { bindTx(pr, 'uDel', dT); setI(pr, 'uBatch', B); setF(pr, 'uInvB', invB); });
+        check('gradB', readR(gb), seq(R, i => {
+            let s = 0; for (let b = 0; b < B; b++) s += Del[b * R + i]; return s * invB;
+        }));
+    }
+    // ---- Adam: the only 3-output pass. Each target is checked separately, because a driver
+    //      that honours only COLOR_ATTACHMENT0 still updates weights but silently freezes the
+    //      moments — which stalls training exactly the way a flat loss curve looks.
+    {
+        const Wv = seq(R * C, val), Mv = seq(R * C, i => val(i + 1) / 2), Vv = seq(R * C, i => Math.abs(val(i + 2)) / 3);
+        const Gv = seq(R * C, i => val(i + 6) / 2), lr = 0.01, c1 = 0.19, c2 = 0.002;
+        const wT = mk(C, R, Wv), mT = mk(C, R, Mv), vT = mk(C, R, Vv), gT = mk(C, R, Gv);
+        const oW = tex(C, R), oM = tex(C, R), oV = tex(C, R);
+        run(pAdam, [oW, oM, oV], C, R, 0, pr => {
+            bindTx(pr, 'uW', wT); bindTx(pr, 'uM', mT); bindTx(pr, 'uV', vT); bindTx(pr, 'uG', gT);
+            setF(pr, 'uLr', lr); setF(pr, 'uC1', c1); setF(pr, 'uC2', c2);
+        });
+        const m = seq(R * C, i => 0.9 * Mv[i] + 0.1 * Gv[i]);
+        const v = seq(R * C, i => 0.999 * Vv[i] + 0.001 * Gv[i] * Gv[i]);
+        check('adam → weights (target 0)', readR(oW),
+            seq(R * C, i => Wv[i] - lr * (m[i] / c1) / (Math.sqrt(v[i] / c2) + 1e-8)));
+        check('adam → moment  (target 1)', readR(oM), m);
+        check('adam → velocity (target 2)', readR(oV), v);
+    }
+    // ---- loss and pack (both go through readPixels on RGBA32F directly)
+    {
+        const O = seq(C * B, i => 0.5 + val(i) / 8), X = seq(C * B, i => 0.5 + val(i + 2) / 8);
+        const oT = mk(C, B, O), xT = mk(C, B, X), lo = tex(B, 1, gl.RGBA32F);
+        run(pLoss, [lo], B, 1, 0, pr => { bindTx(pr, 'uOut', oT); bindTx(pr, 'uX', xT); setI(pr, 'uD', C); });
+        const buf = new Float32Array(B * 4);
+        gl.readPixels(0, 0, B, 1, gl.RGBA, gl.FLOAT, buf);
+        check('loss', seq(B, b => buf[b * 4]), seq(B, b => {
+            let s = 0; for (let i = 0; i < C; i++) { const e = O[b * C + i] - X[b * C + i]; s += e * e; } return s;
+        }));
+        const Lat = seq(B * 2, val), latT = mk(2, B, Lat), pk = tex(B, 1, gl.RGBA32F);
+        run(pPack, [pk], B, 1, 0, pr => bindTx(pr, 'uLat', latT));
+        const pb = new Float32Array(B * 4);
+        gl.readPixels(0, 0, B, 1, gl.RGBA, gl.FLOAT, pb);
+        check('pack (latent readback)', seq(B * 2, k => pb[((k / 2) | 0) * 4 + (k % 2)]), Lat);
+    }
+    // ---- end-to-end: does a real training step actually move the weights, and does the
+    //      loss actually fall? Needs non-zero inputs, so seed the data texture with synthetic
+    //      images first — with an all-zero input the first layer's gradient is legitimately
+    //      zero and the check would accuse an innocent driver.
+    {
+        const NS = 8;
+        const synth = new Float32Array(D * NS);
+        for (let s = 0; s < NS; s++)
+            for (let i = 0; i < D; i++)
+                synth[s * D + i] = 0.5 + 0.45 * Math.sin(i * (0.013 + s * 0.004) + s);
+        upload(dataTex, 0, 0, D, NS, synth);
+        for (let s = 0; s < NS; s++) data.push({ cls: 0, orig: false });
+
+        const LW = layers[2];                             // 64→2: a tiny layer, so the readback is cheap
+        const w0 = readR(LW.W[LW.pi]);
+        const l0 = (trainStep(0.01), readLoss());
+        for (let i = 0; i < 12; i++) trainStep(0.01);
+        const w1 = readR(LW.W[LW.pi]);
+        const l1 = readLoss();
+
+        let moved = 0;
+        for (let i = 0; i < w0.length; i++) if (Math.abs(w1[i] - w0[i]) > 1e-9) moved++;
+        rows.push({ name: 'weights move during training', err: moved ? 0 : 1, ok: moved > 0,
+                    note: moved + ' / ' + w0.length + ' encoder-latent weights changed' });
+        rows.push({ name: 'loss falls over 13 steps', err: l1 < l0 ? 0 : 1, ok: isFinite(l1) && l1 < l0,
+                    note: l0.toFixed(5) + ' → ' + l1.toFixed(5) + (l1 < l0 ? '' : '  (NOT converging)') });
+
+        data.length = 0;                                  // undo the fake dataset and the training
+        initNet();
+    }
+    return rows;
+}
 
 // ==================== DATA: sprites + augmentations ====================
 const SPRITES = [
@@ -918,12 +1087,30 @@ try {
     throw e;
 }
 // ?debug=1 prints the same report even on success, so a working machine and a broken one
-// can be compared line by line.
-if (new URLSearchParams(location.search).has('debug')) {
-    document.getElementById('err').innerHTML =
-        '<details open style="color:#9fe8c0"><summary style="cursor:pointer">GPU diagnostics</summary>' +
+// can be compared line by line. ?selftest=1 additionally validates every compute pass.
+const QS = new URLSearchParams(location.search);
+if (QS.has('debug') || QS.has('selftest')) {
+    let html = '';
+    if (QS.has('selftest')) {
+        let rows;
+        try { rows = selfTest(); }
+        catch (e) { rows = [{ name: 'self-test crashed: ' + e.message, err: NaN, ok: false }]; }
+        const bad = rows.filter(r => !r.ok).length;
+        html += '<div style="color:' + (bad ? '#ff8080' : '#9fe8c0') + ';font-weight:bold">' +
+            (bad ? '✗ ' + bad + ' of ' + rows.length + ' GPU passes are WRONG on this driver'
+                 : '✓ all ' + rows.length + ' GPU passes match the CPU reference') + '</div>' +
+            '<pre style="white-space:pre-wrap;font-size:11px;margin-top:6px">' +
+            rows.map(r => (r.ok ? '  ok   ' : '  FAIL ') + r.name.padEnd(30, ' ') +
+                (r.note ? r.note : 'max abs error ' + (isFinite(r.err) ? r.err.toExponential(2) : String(r.err)) +
+                    (r.ok ? '' : '   got ' + r.got + ', expected ' + r.want))).join('\n') + '</pre>';
+        // a failed pass is the actual bug; say so where the generic error used to go
+        if (bad) html = '<div>⚠ ' + escHtml(T().errPass) + '</div>' + html;
+    }
+    html += '<details' + (QS.has('selftest') ? '' : ' open') + ' style="color:#9fe8c0">' +
+        '<summary style="cursor:pointer">GPU diagnostics</summary>' +
         '<pre style="white-space:pre-wrap;font-size:11px;opacity:.85;margin-top:6px">' +
         escHtml(glReport()) + '</pre></details>';
+    document.getElementById('err').innerHTML = html;
 }
 glCv.addEventListener('webglcontextlost', ev => {
     ev.preventDefault(); running = false; glReady = false;
